@@ -30,7 +30,7 @@ items:
             - name: FRUIT
               value: BANANA
             - name: GIT_AUTHOR_NAME
-              value: somebodyelse
+              value: PIDJENKINSKSBOTT
             - name: DOCKER_REGISTRY
             - name: BUILD_NUMBER
               value: "1"
@@ -75,11 +75,11 @@ items:
             - name: FRUIT
               value: BANANA
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
-              value: somebodyelse
+              value: PIDJENKINSKSBOTT
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE
@@ -143,11 +143,11 @@ items:
             - name: FRUIT
               value: BANANA
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
-              value: somebodyelse
+              value: PIDJENKINSKSBOTT
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE

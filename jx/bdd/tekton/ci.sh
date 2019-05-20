@@ -29,7 +29,7 @@ cat myvalues.yaml
 
 # lets setup git
 git config --global --add user.name JenkinsXBot
-git config --global --add user.email jenkins-x@googlegroups.com
+git config --global --add user.email PIDJenkins-k8s-botT@verisk.com
 
 echo "running the BDD tests with JX_HOME = $JX_HOME"
 

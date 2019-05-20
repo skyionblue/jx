@@ -22,7 +22,7 @@ export JX_DISABLE_DELETE_REPO="true"
 echo ""
 git config --global credential.helper store
 git config --global --add user.name JenkinsXBot
-git config --global --add user.email jenkins-x@googlegroups.com
+git config --global --add user.email PIDJenkins-k8s-botT@verisk.com
 
 JX_HOME="/tmp/jxhome"
 KUBECONFIG="/tmp/jxhome/config"
@@ -46,7 +46,7 @@ cat myvalues.yaml
 echo "creating team: $TEAM"
 
 git config --global --add user.name JenkinsXBot
-git config --global --add user.email jenkins-x@googlegroups.com
+git config --global --add user.email PIDJenkins-k8s-botT@verisk.com
 
 cp ./build/linux/jx /usr/bin
 

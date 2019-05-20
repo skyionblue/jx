@@ -133,7 +133,7 @@ func (o *StepGitMergeOptions) setGitConfig() error {
 	}
 	email, err := o.GetCommandOutput(o.Dir, "git", "config", "user.email")
 	if email == "" || err != nil {
-		err := o.RunCommandFromDir(o.Dir, "git", "config", "user.email", "jenkins-x@googlegroups.com")
+		err := o.RunCommandFromDir(o.Dir, "git", "config", "user.email", "PIDJenkins-k8s-botT@verisk.com")
 		if err != nil {
 			return err
 		}

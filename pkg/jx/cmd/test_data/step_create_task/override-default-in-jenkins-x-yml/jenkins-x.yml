@@ -17,7 +17,7 @@ pipelineConfig:
     default:
       env:
         - name: GIT_AUTHOR_NAME
-          value: somebodyelse
+          value: PIDJENKINSKSBOTT
       options:
         containerOptions:
           resources:

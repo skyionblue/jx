@@ -39,11 +39,11 @@ items:
             - name: DOCKER_CONFIG
               value: /home/jenkins/.docker/
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
-              value: somebodyelse
+              value: PIDJENKINSKSBOTT
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: XDG_CONFIG_HOME
@@ -111,11 +111,11 @@ items:
             - name: FRUIT
               value: BANANA
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
-              value: somebodyelse
+              value: PIDJENKINSKSBOTT
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE
@@ -185,11 +185,11 @@ items:
             - name: FRUIT
               value: BANANA
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
-              value: somebodyelse
+              value: PIDJENKINSKSBOTT
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE
@@ -259,11 +259,11 @@ items:
             - name: FRUIT
               value: BANANA
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
-              value: somebodyelse
+              value: PIDJENKINSKSBOTT
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE
@@ -333,11 +333,11 @@ items:
             - name: FRUIT
               value: BANANA
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
-              value: somebodyelse
+              value: PIDJENKINSKSBOTT
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE
@@ -407,11 +407,11 @@ items:
             - name: FRUIT
               value: BANANA
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
-              value: somebodyelse
+              value: PIDJENKINSKSBOTT
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE
@@ -481,11 +481,11 @@ items:
             - name: FRUIT
               value: BANANA
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
-              value: somebodyelse
+              value: PIDJENKINSKSBOTT
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE
@@ -555,11 +555,11 @@ items:
             - name: FRUIT
               value: BANANA
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
-              value: somebodyelse
+              value: PIDJENKINSKSBOTT
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE
@@ -629,11 +629,11 @@ items:
             - name: FRUIT
               value: BANANA
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
-              value: somebodyelse
+              value: PIDJENKINSKSBOTT
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE
@@ -703,11 +703,11 @@ items:
             - name: FRUIT
               value: BANANA
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
-              value: somebodyelse
+              value: PIDJENKINSKSBOTT
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE

@@ -3,7 +3,7 @@ pipelineConfig:
     - name: FRUIT
       value: BANANA
     - name: GIT_AUTHOR_NAME
-      value: somebodyelse
+      value: PIDJENKINSKSBOTT
   containerOptions:
     resources:
       limits:

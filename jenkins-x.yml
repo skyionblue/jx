@@ -14,9 +14,9 @@ pipelineConfig:
           - name: release
             environment:
               - name: GIT_COMMITTER_EMAIL
-                value: jenkins-x@googlegroups.com
+                value: PIDJenkins-k8s-botT@verisk.com
               - name: GIT_AUTHOR_EMAIL
-                value: jenkins-x@googlegroups.com
+                value: PIDJenkins-k8s-botT@verisk.com
               - name: GIT_AUTHOR_NAME
                 value: jenkins-x-bot
               - name: GIT_COMMITTER_NAME

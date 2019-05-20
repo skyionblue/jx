@@ -37,11 +37,11 @@ items:
             - name: DOCKER_CONFIG
               value: /home/jenkins/.docker/
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
               value: jenkins-x-bot
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: XDG_CONFIG_HOME
@@ -99,11 +99,11 @@ items:
                   key: docker.registry
                   name: jenkins-x-docker-registry
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
               value: jenkins-x-bot
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE
@@ -163,11 +163,11 @@ items:
                   key: docker.registry
                   name: jenkins-x-docker-registry
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
               value: jenkins-x-bot
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE
@@ -227,11 +227,11 @@ items:
                   key: docker.registry
                   name: jenkins-x-docker-registry
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
               value: jenkins-x-bot
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE
@@ -291,11 +291,11 @@ items:
                   key: docker.registry
                   name: jenkins-x-docker-registry
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
               value: jenkins-x-bot
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE
@@ -355,11 +355,11 @@ items:
                   key: docker.registry
                   name: jenkins-x-docker-registry
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
               value: jenkins-x-bot
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE
@@ -419,11 +419,11 @@ items:
                   key: docker.registry
                   name: jenkins-x-docker-registry
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
               value: jenkins-x-bot
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE
@@ -483,11 +483,11 @@ items:
                   key: docker.registry
                   name: jenkins-x-docker-registry
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
               value: jenkins-x-bot
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_COMMITTER_NAME
               value: jenkins-x-bot
             - name: TILLER_NAMESPACE

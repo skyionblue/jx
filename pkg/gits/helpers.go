@@ -50,7 +50,7 @@ func EnsureUserAndEmailSetup(gitter Gitter) (string, string, error) {
 	if userEmail == "" {
 		userEmail = os.Getenv("GIT_AUTHOR_EMAIL")
 		if userEmail == "" {
-			userEmail = "jenkins-x@googlegroups.com"
+			userEmail = "PIDJenkins-k8s-botT@verisk.com"
 		}
 		err := gitter.SetEmail("", userEmail)
 		if err != nil {

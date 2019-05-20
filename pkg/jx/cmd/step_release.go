@@ -118,7 +118,7 @@ func (o *StepReleaseOptions) Run() error {
 	if err != nil || gitEmail == "" {
 		gitEmail = o.GitEmail
 		if gitEmail == "" {
-			gitEmail = "jenkins-x@googlegroups.com"
+			gitEmail = "PIDJenkins-k8s-botT@verisk.com"
 		}
 		err = o.Git().SetEmail(dir, gitEmail)
 		if err != nil {

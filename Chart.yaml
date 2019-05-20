@@ -6,7 +6,7 @@ version: 0.0.1-SNAPSHOT
 appVersion: 0.1
 icon: https://jenkins-x.github.io/jenkins-x-website/img/profile.png
 sources:
-- https://github.com/jenkins-x/jx
+- https://github.com/skyionblue/jx
 maintainers:
-- name: Jenkins X Team
-  email: jenkins-x@googlegroups.com
+- name: AJC Cloud Consulting
+  email: james@ajccloudconsulting.com

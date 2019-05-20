@@ -22,7 +22,7 @@ NAME := jx
 GO := GO111MODULE=on go
 GO_NOMOD :=GO111MODULE=off go
 REV := $(shell git rev-parse --short HEAD 2> /dev/null || echo 'unknown')
-ROOT_PACKAGE := github.com/jenkins-x/jx
+ROOT_PACKAGE := github.com/skyionblue/jx
 GO_VERSION := $(shell $(GO) version | sed -e 's/^[^0-9.]*\([0-9.]*\).*/\1/')
 GO_DEPENDENCIES := $(call rwildcard,pkg/,*.go) $(call rwildcard,cmd/jx/,*.go)
 
@@ -104,7 +104,7 @@ test-slow-report: get-test-deps test-slow
 test-slow-report-html: get-test-deps test-slow
 	@gocov convert cover.out | gocov-html > cover.html && open cover.html
 
-test-integration: ## Run the integration tests 
+test-integration: ## Run the integration tests
 	@CGO_ENABLED=$(CGO_ENABLED) $(GO) test -count=1 -tags=integration -coverprofile=cover.out -short ./...
 
 test-integration1:

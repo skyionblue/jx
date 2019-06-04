@@ -3,12 +3,15 @@
 package cmd_test
 
 import (
-	"github.com/spf13/cobra"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jenkins-x/jx/pkg/jx/cmd/cmd_test_helpers"
+	"github.com/spf13/cobra"
 
 	"github.com/jenkins-x/jx/pkg/client/clientset/versioned"
 	"github.com/jenkins-x/jx/pkg/cloud"
@@ -18,6 +21,7 @@ import (
 	"github.com/jenkins-x/jx/pkg/kube"
 	resources_test "github.com/jenkins-x/jx/pkg/kube/resources/mocks"
 	"github.com/jenkins-x/jx/pkg/testkube"
+	"github.com/jenkins-x/jx/pkg/util"
 	"github.com/stretchr/testify/require"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,16 +34,16 @@ import (
 )
 
 func TestInstallGitOps(t *testing.T) {
-	originalJxHome, tempJxHome, err := cmd.CreateTestJxHomeDir()
+	originalJxHome, tempJxHome, err := cmd_test_helpers.CreateTestJxHomeDir()
 	assert.NoError(t, err)
 	defer func() {
-		err := cmd.CleanupTestJxHomeDir(originalJxHome, tempJxHome)
+		err := cmd_test_helpers.CleanupTestJxHomeDir(originalJxHome, tempJxHome)
 		assert.NoError(t, err)
 	}()
-	originalKubeCfg, tempKubeCfg, err := cmd.CreateTestKubeConfigDir()
+	originalKubeCfg, tempKubeCfg, err := cmd_test_helpers.CreateTestKubeConfigDir()
 	assert.NoError(t, err)
 	defer func() {
-		err := cmd.CleanupTestKubeConfigDir(originalKubeCfg, tempKubeCfg)
+		err := cmd_test_helpers.CleanupTestKubeConfigDir(originalKubeCfg, tempKubeCfg)
 		assert.NoError(t, err)
 	}()
 
@@ -70,7 +74,7 @@ func TestInstallGitOps(t *testing.T) {
 
 	gitter := gits.NewGitFake()
 	helmer := helm_test.NewMockHelmer()
-	cmd.ConfigureTestOptionsWithResources(o.CommonOptions,
+	cmd_test_helpers.ConfigureTestOptionsWithResources(o.CommonOptions,
 		[]runtime.Object{
 			clusterAdminRole,
 			testkube.CreateFakeGitSecret(),
@@ -99,6 +103,7 @@ func TestInstallGitOps(t *testing.T) {
 	assertNoEnvironments(t, jxClient, ns)
 
 	testOrg := "mytestorg"
+	testEnvPrefix := "test"
 	o.Flags.Provider = cloud.GKE
 	o.Flags.Dir = tempDir
 	o.Flags.GitOpsMode = true
@@ -109,6 +114,7 @@ func TestInstallGitOps(t *testing.T) {
 	o.Flags.DisableSetKubeContext = true
 	o.Flags.EnvironmentGitOwner = testOrg
 	o.Flags.Domain = "mytestdomain"
+	o.Flags.DefaultEnvironmentPrefix = testEnvPrefix
 	o.InitOptions.Flags.SkipTiller = true
 	o.InitOptions.Flags.NoTiller = true
 	o.InitOptions.Flags.SkipIngress = true
@@ -134,17 +140,21 @@ func TestInstallGitOps(t *testing.T) {
 
 	t.Logf("Completed install to dir %s", tempDir)
 
-	outDir := filepath.Join(tempDir, "jenkins-x-dev-environment")
+	envsDir, err := util.EnvironmentsDir()
+	require.NoError(t, err, "Failed to get the environments dir")
+	devEnvDir := fmt.Sprintf("environment-%s-dev", testEnvPrefix)
+	outDir := filepath.Join(envsDir, testOrg, devEnvDir)
 	envDir := filepath.Join(outDir, "env")
+
 	chartFile := filepath.Join(envDir, helm.ChartFileName)
 	reqFile := filepath.Join(envDir, helm.RequirementsFileName)
 	secretsFile := filepath.Join(envDir, helm.SecretsFileName)
 	valuesFile := filepath.Join(envDir, helm.ValuesFileName)
-
 	assert.FileExists(t, chartFile)
 	assert.FileExists(t, reqFile)
 	assert.FileExists(t, secretsFile)
 	assert.FileExists(t, valuesFile)
+
 	for _, name := range []string{"dev-env.yaml", "ingress-config-configmap.yaml", "jx-install-config-secret.yaml"} {
 		assert.FileExists(t, filepath.Join(envDir, "templates", name))
 	}
@@ -163,7 +173,7 @@ func TestInstallGitOps(t *testing.T) {
 	dep0 := req.Dependencies[0]
 	require.NotNil(t, dep0, "first dependency in file %s", reqFile)
 	assert.Equal(t, kube.DefaultChartMuseumURL, dep0.Repository, "requirement.dependency[0].Repository")
-	assert.Equal(t, cmd.JenkinsXPlatformChartName, dep0.Name, "requirement.dependency[0].Name")
+	assert.Equal(t, opts.JenkinsXPlatformChartName, dep0.Name, "requirement.dependency[0].Name")
 	assert.NotEmpty(t, dep0.Version, "requirement.dependency[0].Version")
 
 	values, err := chartutil.ReadValuesFile(valuesFile)

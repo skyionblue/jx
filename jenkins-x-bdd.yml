@@ -20,6 +20,13 @@ pipelineConfig:
                 value: /workspace/source
               - name: GOPROXY
                 value: http://jenkins-x-athens-proxy:80
+              - name: PARALLEL_BUILDS
+                value: "2"
+                # Build a binary that can emit coverage
+              - name: COVERED_BINARY
+                value: "true"
+              - name: CODECOV_NAME
+                value: e2e
             options:
               containerOptions:
                 resources:
@@ -29,6 +36,12 @@ pipelineConfig:
                   requests:
                     cpu: 3
                     memory: 3072Mi
+                env:
+                  - name: CODECOV_TOKEN
+                    valueFrom:
+                      secretKeyRef:
+                        key: token
+                        name: codecov-token
 
             steps:
               - name: build-binary
@@ -39,7 +52,11 @@ pipelineConfig:
               - name: validate-binary
                 image: docker.io/golang:1.11.5
                 command: "./build/linux/jx"
-                args: ['--help']
+                args: ['help']
+                # Supported when we upgrade
+                #env:
+                #- name: COVER_JX_BINARY
+                #  value: false
 
               - name: build-and-push-image
                 image: rawlingsj/executor:dev40
@@ -61,6 +78,12 @@ pipelineConfig:
                 command: /kaniko/executor
                 args: ['--dockerfile=/workspace/source/Dockerfile.builder-go','--destination=docker.io/jenkinsxio/builder-go:${inputs.params.version}','--context=/workspace/source','--cache-repo=jenkins-x-docker-registry.jx.svc.cluster.local:5000/','--cache=true','--cache-dir=/workspace','--skip-tls-verify-registry=jenkins-x-docker-registry.jx.svc.cluster.local:5000']
 
-              - name: preview
+              - name: e2e-tests
                 image: gcr.io/jenkinsxio/builder-go:0.1.332
                 command: ./jx/scripts/ci.sh
+
+              - name: stash-test-results
+                image: jenkinsxio/jx:2.0.128
+                command: jx
+                # TODO force it to use the gs bucket until we sort out why the team setting gets wiped
+                args: ['step', 'stash', '-c', 'e2e-tests', '-p', 'build/reports/junit.xml', '--bucket-url', 'gs://jx-prod-logs']

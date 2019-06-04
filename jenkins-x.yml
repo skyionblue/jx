@@ -33,15 +33,23 @@ pipelineConfig:
                 value: -Xmx4g
               - name: _JAVA_OPTIONS
                 value: -XX:+UnlockExperimentalVMOptions -XX:+UseCGroupMemoryLimitForHeap -Dsun.zip.disableMemoryMapping=true -XX:+UseParallelGC -XX:MinHeapFreeRatio=5 -XX:MaxHeapFreeRatio=10 -XX:GCTimeRatio=4 -XX:AdaptiveSizePolicyWeight=90 -Xms1G -Xmx4G
+              - name: PARALLEL_BUILDS
+                value: "2"
             options:
               containerOptions:
                 resources:
                   limits:
                     cpu: 4
-                    memory: 6144Mi
+                    memory: 8Gi
                   requests:
                     cpu: 3
                     memory: 3072Mi
+                env:
+                - name: CODECOV_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      key: token
+                      name: codecov-token
             steps:
               - name: init-helm
                 image: alpine/helm:2.12.3
@@ -103,6 +111,11 @@ pipelineConfig:
                 command: make
                 args: ['release']
 
+              - name: codecov-upload
+                image: gcr.io/jenkinsxio/builder-go:0.1.332
+                command: make
+                args: ['codecov-upload']
+
               - name: build-and-push-image
                 image: gcr.io/kaniko-project/executor:9912ccbf8d22bbafbf971124600fbb0b13b9cbd6
                 command: /kaniko/executor
@@ -120,26 +133,18 @@ pipelineConfig:
                 image: gcr.io/jenkinsxio/builder-jx:0.1.332
                 command: ./jx/scripts/update-bot.sh
 
-              - name: distro
+              #- name: distro
                 #image: docker.io/golang:1.11.5
                 # needs helm in the image for install_gitops_integration_test.go
-                image: gcr.io/jenkinsxio/builder-go:0.1.332
-                command: make
-                args: ['release-distro']
+              #  image: gcr.io/jenkinsxio/builder-go:0.1.332
+              #  command: make
+              #  args: ['release-distro']
 
               - name: update-docs
                 image: gcr.io/jenkinsxio/builder-go:0.1.332
                 command: ./jx/scripts/update-website.sh
 
-
-# Maven hanging at the moment, so commenting out
-#              - name: update-clients
-#                # Needs maven as openapi tools are written in Java!
-#                image: gcr.io/jenkinsxio/builder-maven:0.1.448
-#                command: ./jx/scripts/update-clients.sh
-
-
-              - name: codecov-upload
-                image: gcr.io/jenkinsxio/builder-go:0.1.332
-                command: make
-                args: ['codecov-upload']
+              - name: update-clients
+                # Needs maven as openapi tools are written in Java!
+                image: gcr.io/jenkinsxio/builder-maven:0.1.462
+                command: ./jx/scripts/update-clients.sh

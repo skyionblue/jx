@@ -4,6 +4,8 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	"github.com/jenkins-x/jx/pkg/jx/cmd/step/env"
+
 	"github.com/jenkins-x/jx/pkg/jx/cmd/helper"
 
 	"io/ioutil"
@@ -125,6 +127,7 @@ type InstallFlags struct {
 	StaticJenkins               bool
 	LongTermStorage             bool
 	LongTermStorageBucketName   string
+	Advanced                    bool
 }
 
 // Secrets struct for secrets
@@ -136,13 +139,6 @@ type Secrets struct {
 const (
 	JX_GIT_TOKEN = "JX_GIT_TOKEN"
 	JX_GIT_USER  = "JX_GIT_USER"
-
-	// JenkinsXPlatformChartName default chart name for Jenkins X platform
-	JenkinsXPlatformChartName = "jenkins-x-platform"
-
-	// JenkinsXPlatformChart the default full chart name with the default repository prefix
-	JenkinsXPlatformChart   = "jenkins-x/" + JenkinsXPlatformChartName
-	JenkinsXPlatformRelease = "jenkins-x"
 
 	ServerlessJenkins   = "Serverless Jenkins X Pipelines with Tekton"
 	StaticMasterJenkins = "Static Jenkins Server and Jenkinsfiles"
@@ -367,6 +363,7 @@ func (options *InstallOptions) addInstallFlags(cmd *cobra.Command, includesInit 
 	cmd.Flags().BoolVarP(&flags.StaticJenkins, "static-jenkins", "", false, "Install a static Jenkins master to use as the pipeline engine. Note this functionality is deprecated in favour of running serverless Tekton builds")
 	cmd.Flags().BoolVarP(&flags.LongTermStorage, longTermStorageFlagName, "", false, "Enable the Long Term Storage option to save logs and other assets into a GCS bucket (supported only for GKE)")
 	cmd.Flags().StringVarP(&flags.LongTermStorageBucketName, "lts-bucket", "", "", "The bucket to use for Long Term Storage. If the bucket doesn't exist, an attempt will be made to create it, otherwise random naming will be used")
+	cmd.Flags().BoolVarP(&flags.Advanced, "advanced", "", false, "Advanced install options. This will prompt for advanced install options")
 
 	opts.AddGitRepoOptionsArguments(cmd, &options.GitRepositoryOptions)
 	options.HelmValuesConfig.AddExposeControllerValues(cmd, true)
@@ -436,6 +433,12 @@ func (options *InstallOptions) checkFlags() error {
 	// If we're using external-dns then remove the namespace subdomain from the URLTemplate
 	if flags.ExternalDNS {
 		flags.ExposeControllerURLTemplate = "{{.Service}}-{{.Namespace}}.{{.Domain}}"
+	}
+
+	// Make sure that the default environment prefix is configured. Typically it is the cluster
+	// name when the install command is called from create cluster.
+	if options.Flags.DefaultEnvironmentPrefix == "" {
+		options.Flags.DefaultEnvironmentPrefix = strings.ToLower(randomdata.SillyName())
 	}
 
 	return nil
@@ -632,12 +635,12 @@ func (options *InstallOptions) Run() error {
 
 	if options.Flags.GitOpsMode {
 		err := options.installPlatformGitOpsMode(gitOpsEnvDir, gitOpsDir, configStore, kube.DefaultChartMuseumURL,
-			JenkinsXPlatformChartName, ns, version, valuesFiles, secretsFiles)
+			opts.JenkinsXPlatformChartName, ns, version, valuesFiles, secretsFiles)
 		if err != nil {
 			return errors.Wrap(err, "installing the Jenkins X platform in GitOps mode")
 		}
 	} else {
-		err := options.installPlatform(providerEnvDir, JenkinsXPlatformChart, JenkinsXPlatformRelease,
+		err := options.installPlatform(providerEnvDir, opts.JenkinsXPlatformChart, opts.JenkinsXPlatformRelease,
 			ns, version, valuesFiles, secretsFiles)
 		if err != nil {
 			return errors.Wrap(err, "installing the Jenkins X platform")
@@ -705,7 +708,7 @@ func (options *InstallOptions) Run() error {
 		}
 	}
 
-	err = options.generateGitOpsDevEnvironmentConfig(gitOpsDir)
+	gitOpsEnvDir, err = options.generateGitOpsDevEnvironmentConfig(gitOpsDir)
 	if err != nil {
 		return errors.Wrap(err, "generating the GitOps development environment config")
 	}
@@ -913,7 +916,7 @@ func (options *InstallOptions) installPlatformGitOpsMode(gitOpsEnvDir string, gi
 	valuesFile := filepath.Join(gitOpsEnvDir, helm.ValuesFileName)
 
 	platformDep := &helm.Dependency{
-		Name:       JenkinsXPlatformChartName,
+		Name:       opts.JenkinsXPlatformChartName,
 		Version:    version,
 		Repository: kube.DefaultChartMuseumURL,
 	}
@@ -943,7 +946,7 @@ func (options *InstallOptions) installPlatformGitOpsMode(gitOpsEnvDir string, gi
 		return errors.Wrapf(err, "failed to save file %s", chartFile)
 	}
 
-	err = helm.CombineValueFilesToFile(secretsFile, secretsFiles, JenkinsXPlatformChartName, nil)
+	err = helm.CombineValueFilesToFile(secretsFile, secretsFiles, opts.JenkinsXPlatformChartName, nil)
 	if err != nil {
 		return errors.Wrapf(err, "failed to generate %s by combining helm Secret YAML files %s", secretsFile, strings.Join(secretsFiles, ", "))
 	}
@@ -990,7 +993,7 @@ func (options *InstallOptions) installPlatformGitOpsMode(gitOpsEnvDir string, gi
 		util.CombineMapTrees(extraValues, currentValues)
 	}
 
-	err = helm.CombineValueFilesToFile(valuesFile, valuesFiles, JenkinsXPlatformChartName, extraValues)
+	err = helm.CombineValueFilesToFile(valuesFile, valuesFiles, opts.JenkinsXPlatformChartName, extraValues)
 	if err != nil {
 		return errors.Wrapf(err, "failed to generate %s by combining helm value YAML files %s", valuesFile, strings.Join(valuesFiles, ", "))
 	}
@@ -1553,7 +1556,9 @@ func (options *InstallOptions) configureGitOpsMode(configStore configio.ConfigSt
 				return "", "", err
 			}
 		}
-		gitOpsDir = filepath.Join(options.Flags.Dir, "jenkins-x-dev-environment")
+
+		envName := fmt.Sprintf("environment-%s-dev", options.Flags.DefaultEnvironmentPrefix)
+		gitOpsDir = filepath.Join(options.Flags.Dir, envName)
 		gitOpsEnvDir = filepath.Join(gitOpsDir, "env")
 		templatesDir := filepath.Join(gitOpsEnvDir, "templates")
 		err = os.MkdirAll(templatesDir, util.DefaultWritePermissions)
@@ -1596,7 +1601,7 @@ func (options *InstallOptions) configureGitOpsMode(configStore configio.ConfigSt
 	return gitOpsDir, gitOpsEnvDir, nil
 }
 
-func (options *InstallOptions) generateGitOpsDevEnvironmentConfig(gitOpsDir string) error {
+func (options *InstallOptions) generateGitOpsDevEnvironmentConfig(gitOpsDir string) (string, error) {
 	if options.Flags.GitOpsMode {
 		log.Infof("\n\nGenerated the source code for the GitOps development environment at %s\n", util.ColorInfo(gitOpsDir))
 		log.Infof("You can apply this to the kubernetes cluster at any time in this directory via: %s\n\n", util.ColorInfo("jx step env apply"))
@@ -1604,7 +1609,7 @@ func (options *InstallOptions) generateGitOpsDevEnvironmentConfig(gitOpsDir stri
 		if !options.Flags.NoGitOpsEnvRepo {
 			authConfigSvc, err := options.CreateGitAuthConfigService()
 			if err != nil {
-				return errors.Wrap(err, "creating git auth config service")
+				return "", errors.Wrap(err, "creating git auth config service")
 			}
 			config := &v1.Environment{
 				Spec: v1.EnvironmentSpec{
@@ -1621,11 +1626,11 @@ func (options *InstallOptions) generateGitOpsDevEnvironmentConfig(gitOpsDir stri
 				return nil
 			})
 			if err != nil {
-				return errors.Wrap(err, "modifying the dev environment configuration")
+				return "", errors.Wrap(err, "modifying the dev environment configuration")
 			}
 			envDir, err := util.EnvironmentsDir()
 			if err != nil {
-				return errors.Wrap(err, "getting the environments directory")
+				return "", errors.Wrap(err, "getting the environments directory")
 			}
 			forkEnvGitURL := ""
 			prefix := options.Flags.DefaultEnvironmentPrefix
@@ -1636,18 +1641,18 @@ func (options *InstallOptions) generateGitOpsDevEnvironmentConfig(gitOpsDir stri
 				if err == nil {
 					err = errors.New("empty git repository options")
 				}
-				return errors.Wrap(err, "building the git repository options for environment")
+				return "", errors.Wrap(err, "building the git repository options for environment")
 			}
 			repo, gitProvider, err := kube.CreateEnvGitRepository(options.BatchMode, authConfigSvc, devEnv, devEnv, config, forkEnvGitURL, envDir,
 				gitRepoOptions, options.CreateEnvOptions.HelmValuesConfig, prefix, git, options.ResolveChartMuseumURL, options.In, options.Out, options.Err)
 			if err != nil || repo == nil || gitProvider == nil {
-				return errors.Wrap(err, "creating git repository for the dev environment source")
+				return "", errors.Wrap(err, "creating git repository for the dev environment source")
 			}
 
 			dir := gitOpsDir
 			err = git.Init(dir)
 			if err != nil {
-				return errors.Wrap(err, "initializing the dev environment repository")
+				return "", errors.Wrap(err, "initializing the dev environment repository")
 			}
 			err = options.ModifyDevEnvironment(func(env *v1.Environment) error {
 				env.Spec.Source.URL = repo.CloneURL
@@ -1655,39 +1660,51 @@ func (options *InstallOptions) generateGitOpsDevEnvironmentConfig(gitOpsDir stri
 				return nil
 			})
 			if err != nil {
-				return errors.Wrap(err, "updating the source in the dev environment")
+				return "", errors.Wrap(err, "updating the source in the dev environment")
 			}
 
 			err = git.Add(dir, ".gitignore")
 			if err != nil {
-				return errors.Wrap(err, "adding gitignore to the dev environemnt")
+				return "", errors.Wrap(err, "adding gitignore to the dev environemnt")
 			}
 			err = git.Add(dir, "*")
 			if err != nil {
-				return errors.Wrap(err, "adding all files from dev environment repo to git")
+				return "", errors.Wrap(err, "adding all files from dev environment repo to git")
 			}
 			err = options.Git().CommitIfChanges(dir, "Initial import of Dev Environment source")
 			if err != nil {
-				return errors.Wrap(err, "committing in git if there are changes")
+				return "", errors.Wrap(err, "committing in git if there are changes")
 			}
 			userAuth := gitProvider.UserAuth()
 			pushGitURL, err := git.CreatePushURL(repo.CloneURL, &userAuth)
 			if err != nil {
-				return errors.Wrapf(err, "creating push URL for %q", repo.CloneURL)
+				return "", errors.Wrapf(err, "creating push URL for %q", repo.CloneURL)
 			}
 			err = git.SetRemoteURL(dir, "origin", pushGitURL)
 			if err != nil {
-				return errors.Wrapf(err, "setting remote origin to %q", pushGitURL)
+				return "", errors.Wrapf(err, "setting remote origin to %q", pushGitURL)
 			}
 			err = git.PushMaster(dir)
 			if err != nil {
-				return errors.Wrapf(err, "pushing master from repository %q", dir)
+				return "", errors.Wrapf(err, "pushing master from repository %q", dir)
 			}
 			log.Infof("Pushed Git repository to %s\n\n", util.ColorInfo(repo.HTMLURL))
+
+			dir = filepath.Join(envDir, gitRepoOptions.Owner)
+			if _, err := os.Stat(dir); os.IsNotExist(err) {
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					return "", errors.Wrapf(err, "creating directory %q", dir)
+				}
+			}
+			dir = filepath.Join(dir, repo.Name)
+			if err := util.RenameDir(gitOpsDir, dir, true); err != nil {
+				return "", errors.Wrap(err, "renaming dev environment dir")
+			}
+			return filepath.Join(dir, "env"), nil
 		}
 	}
 
-	return nil
+	return "", nil
 }
 
 func (options *InstallOptions) applyGitOpsDevEnvironmentConfig(gitOpsEnvDir string, namespace string) error {
@@ -1704,9 +1721,9 @@ func (options *InstallOptions) applyGitOpsDevEnvironmentConfig(gitOpsEnvDir stri
 			// environment. The location might have been changed in the cluster configuration.
 			options.ResetSecretsLocation()
 
-			envApplyOptions := &StepEnvApplyOptions{
-				StepEnvOptions: StepEnvOptions{
-					StepOptions: StepOptions{
+			envApplyOptions := &env.StepEnvApplyOptions{
+				StepEnvOptions: env.StepEnvOptions{
+					StepOptions: opts.StepOptions{
 						CommonOptions: options.CommonOptions,
 					},
 				},
@@ -1995,7 +2012,7 @@ func (options *InstallOptions) registerAllCRDs() error {
 		if err != nil {
 			return errors.Wrap(err, "failed to create the API extensions client")
 		}
-		kube.RegisterAllCRDs(apisClient)
+		err = kube.RegisterAllCRDs(apisClient)
 		if err != nil {
 			return err
 		}
@@ -2314,7 +2331,7 @@ func (options *InstallOptions) configureLongTermStorageBucket() error {
 				return errors.Wrap(err, "filling install values with cluster information")
 			}
 			bucketURL, err = gkeStorage.EnableLongTermStorage(options.installValues,
-				options.Flags.LongTermStorageBucketName, options.doCreateBucket)
+				options.Flags.LongTermStorageBucketName)
 			if err != nil {
 				return errors.Wrap(err, "enabling long term storage on GKE")
 			}
@@ -2388,29 +2405,6 @@ func (options *InstallOptions) ensureGKEInstallValuesAreFilled() error {
 	}
 
 	return nil
-}
-
-// this method should work for any bucket kind even if the properties are called GKE*
-func (options *InstallOptions) doCreateBucket(bucketName string, bucketKind string) (string, error) {
-	cbv := &opts.CreateBucketValues{
-		Bucket:       bucketName,
-		BucketKind:   bucketKind,
-		GKEProjectID: options.installValues[kube.ProjectID],
-		GKEZone:      options.installValues[kube.Zone],
-	}
-
-	teamSettings, err := options.TeamSettings()
-	if err != nil {
-		return "", errors.Wrap(err, "there was a problem obtaining the default team settings")
-	}
-
-	bucketURL, err := options.CreateBucket(cbv, teamSettings)
-	if err != nil {
-		return "", errors.Wrapf(err, "there was a problem creating the bucket %s in the GKE Project %s",
-			cbv.Bucket, cbv.GKEProjectID)
-	}
-
-	return bucketURL, err
 }
 
 func (options *InstallOptions) saveIngressConfig() (*kube.IngressConfig, error) {
@@ -2556,10 +2550,6 @@ func (options *InstallOptions) installAddons() error {
 }
 
 func (options *InstallOptions) createEnvironments(namespace string) error {
-	if options.Flags.DefaultEnvironmentPrefix == "" {
-		options.Flags.DefaultEnvironmentPrefix = strings.ToLower(randomdata.SillyName())
-	}
-
 	if !options.Flags.NoDefaultEnvironments {
 		createEnvironments := true
 		if options.Flags.GitOpsMode {
@@ -2839,9 +2829,9 @@ func (options *InstallOptions) logAdminPassword() {
 
 // LoadVersionFromCloudEnvironmentsDir lets load the jenkins-x-platform version
 func LoadVersionFromCloudEnvironmentsDir(wrkDir string, configStore configio.ConfigStore) (string, error) {
-	version, err := version2.LoadStableVersionNumber(wrkDir, version2.KindChart, JenkinsXPlatformChart)
+	version, err := version2.LoadStableVersionNumber(wrkDir, version2.KindChart, opts.JenkinsXPlatformChart)
 	if err != nil {
-		return version, errors.Wrapf(err, "failed to load version of chart %s in dir %s", JenkinsXPlatformChart, wrkDir)
+		return version, errors.Wrapf(err, "failed to load version of chart %s in dir %s", opts.JenkinsXPlatformChart, wrkDir)
 	}
 	return version, nil
 }
@@ -3102,17 +3092,25 @@ func (options *InstallOptions) configureTeamSettings() error {
 			env.Spec.TeamSettings.KubeProvider = options.Flags.Provider
 			log.Infof("Storing the kubernetes provider %s in the TeamSettings\n", env.Spec.TeamSettings.KubeProvider)
 		}
-		if initOpts.Flags.NoTiller {
+
+		if initOpts.Flags.Helm3 {
+			env.Spec.TeamSettings.HelmTemplate = false
+			env.Spec.TeamSettings.HelmBinary = "helm3"
+			log.Info("Enabling helm3 / non template mode in the TeamSettings\n")
+		} else if initOpts.Flags.NoTiller {
 			env.Spec.TeamSettings.HelmTemplate = true
 			log.Info("Enabling helm template mode in the TeamSettings\n")
 		}
+
 		if options.Flags.DockerRegistryOrg != "" {
 			env.Spec.TeamSettings.DockerRegistryOrg = options.Flags.DockerRegistryOrg
 			log.Infof("Setting the docker registry organisation to %s in the TeamSettings\n", env.Spec.TeamSettings.DockerRegistryOrg)
 		}
+
 		if options.Flags.VersionsRepository != "" {
 			env.Spec.TeamSettings.VersionStreamURL = options.Flags.VersionsRepository
 		}
+
 		if options.Flags.VersionsGitRef != "" {
 			env.Spec.TeamSettings.VersionStreamRef = options.Flags.VersionsGitRef
 		}

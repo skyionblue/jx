@@ -30,7 +30,7 @@ const (
 
 // StepBDDOptions contains the command line arguments for this command
 type StepBDDOptions struct {
-	StepOptions
+	opts.StepOptions
 
 	InstallOptions InstallOptions
 	Flags          StepBDDFlags
@@ -59,6 +59,7 @@ type StepBDDFlags struct {
 	JxBinary            string
 	TestCases           []string
 	VersionsRepoPr      bool
+	BaseDomain          string
 }
 
 var (
@@ -78,7 +79,7 @@ var (
 
 func NewCmdStepBDD(commonOpts *opts.CommonOptions) *cobra.Command {
 	options := StepBDDOptions{
-		StepOptions: StepOptions{
+		StepOptions: opts.StepOptions{
 			CommonOptions: commonOpts,
 		},
 		InstallOptions: CreateInstallOptions(commonOpts),
@@ -98,6 +99,7 @@ func NewCmdStepBDD(commonOpts *opts.CommonOptions) *cobra.Command {
 	installOptions := &options.InstallOptions
 	installOptions.addInstallFlags(cmd, true)
 
+	cmd.Flags().StringVarP(&options.Flags.BaseDomain, "base-domain", "", "", "the base domain to use when creating the cluster")
 	cmd.Flags().StringVarP(&options.Flags.ConfigFile, "config", "c", "", "the config YAML file containing the clusters to create")
 	cmd.Flags().StringVarP(&options.Flags.GoPath, "gopath", "", "", "the GOPATH directory where the BDD test git repository will be cloned")
 	cmd.Flags().StringVarP(&options.Flags.GitProvider, "git-provider", "g", "", "the git provider kind")
@@ -410,6 +412,18 @@ func (o *StepBDDOptions) runTests(gopath string) error {
 	if o.Flags.DisableDeleteRepo {
 		env["JX_DISABLE_DELETE_REPO"] = "true"
 	}
+	awsAccessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+	if awsAccessKey != "" {
+		env["AWS_ACCESS_KEY_ID"] = awsAccessKey
+	}
+	awsSecret := os.Getenv("AWS_SECRET_ACCESS_KEY")
+	if awsSecret != "" {
+		env["AWS_SECRET_ACCESS_KEY"] = awsSecret
+	}
+	awsRegion := os.Getenv("AWS_REGION")
+	if awsRegion != "" {
+		env["AWS_REGION"] = awsRegion
+	}
 
 	c := &util.Command{
 		Dir:  testDir,
@@ -541,7 +555,14 @@ func (o *StepBDDOptions) createCluster(cluster *bdd.CreateCluster) error {
 	log.Infof("\nCreating cluster %s\n", util.ColorInfo(cluster.Name))
 	binary := o.Flags.JxBinary
 	args := cluster.Args
-	args = append(args, "--cluster-name", cluster.Name)
+
+	if cluster.Terraform {
+		// use the cluster name as the organisation name
+		args = append(args, "--organisation-name", cluster.Name)
+		args = append(args, "--cluster-name", "dev")
+	} else {
+		args = append(args, "--cluster-name", cluster.Name)
+	}
 
 	if util.StringArrayIndex(args, "-b") < 0 && util.StringArrayIndex(args, "--batch-mode") < 0 {
 		args = append(args, "--batch-mode")
@@ -562,6 +583,10 @@ func (o *StepBDDOptions) createCluster(cluster *bdd.CreateCluster) error {
 		cluster.Labels = addLabel(cluster.Labels, "branch", branch)
 
 		args = append(args, "--labels", cluster.Labels)
+	}
+
+	if o.Flags.BaseDomain != "" {
+		args = append(args, "--domain", cluster.Name+"."+o.Flags.BaseDomain)
 	}
 
 	gitProviderURL := o.gitProviderUrl()

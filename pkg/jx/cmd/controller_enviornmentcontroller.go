@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/jenkins-x/jx/pkg/jx/cmd/helper"
+	"github.com/jenkins-x/jx/pkg/jx/cmd/step/create"
+	"github.com/jenkins-x/jx/pkg/jx/cmd/step/git"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -58,7 +60,7 @@ type ControllerEnvironmentOptions struct {
 	PushRef               string
 	Labels                map[string]string
 
-	StepCreateTaskOptions StepCreateTaskOptions
+	StepCreateTaskOptions create.StepCreateTaskOptions
 	secret                []byte
 }
 
@@ -449,8 +451,8 @@ func (o *ControllerEnvironmentOptions) stepGitCredentials() error {
 	if !o.NoGitCredeentialsInit {
 		copy := *o.CommonOptions
 		copy.BatchMode = true
-		gsc := &StepGitCredentialsOptions{
-			StepOptions: StepOptions{
+		gsc := &git.StepGitCredentialsOptions{
+			StepOptions: opts.StepOptions{
 				CommonOptions: &copy,
 			},
 		}

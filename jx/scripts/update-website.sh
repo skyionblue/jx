@@ -12,6 +12,7 @@ pushd jx-docs/content/commands
   git config credential.helper store
   git add *
   git commit --allow-empty -a -m "updated jx commands & API docs from $VERSION"
+  git fetch origin && git rebase origin/master
   git push origin
 popd
 
@@ -23,6 +24,7 @@ pushd jx-docs/content
   ../../../build/linux/jx step syntax schema -o jx-schema.json
   git add *
   git commit --allow-empty -a -m "updated jx Json Schema from $VERSION"
+  git fetch origin && git rebase origin/master
   git push origin
 popd
 
@@ -33,6 +35,7 @@ cp -r docs/apidocs/site jx-docs/static/apidocs
 pushd jx-docs/static/apidocs
   git add *
   git commit --allow-empty -a -m "updated jx API docs from $VERSION"
+  git fetch origin && git rebase origin/master
   git push origin
 popd
 

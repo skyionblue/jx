@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/jenkins-x/jx/pkg/jx/cmd/helper"
+	"github.com/jenkins-x/jx/pkg/jx/cmd/step/create"
+	"github.com/jenkins-x/jx/pkg/jx/cmd/step/git"
 	"io/ioutil"
 	"net/http"
 	"strconv"
@@ -33,10 +35,10 @@ const (
 // ControllerPipelineRunnerOptions holds the command line arguments
 type ControllerPipelineRunnerOptions struct {
 	*opts.CommonOptions
-	BindAddress           string
-	Path                  string
-	Port                  int
-	NoGitCredeentialsInit bool
+	BindAddress          string
+	Path                 string
+	Port                 int
+	NoGitCredentialsInit bool
 }
 
 // PipelineRunRequest the request to trigger a pipeline run
@@ -94,13 +96,13 @@ func NewCmdControllerPipelineRunner(commonOpts *opts.CommonOptions) *cobra.Comma
 	cmd.Flags().StringVarP(&options.Path, "path", "p", "/",
 		"The path to listen on for requests to trigger a pipeline run.")
 	cmd.Flags().StringVarP(&options.ServiceAccount, "service-account", "", "tekton-bot", "The Kubernetes ServiceAccount to use to run the pipeline")
-	cmd.Flags().BoolVarP(&options.NoGitCredeentialsInit, "no-git-init", "", false, "Disables checking we have setup git credentials on startup")
+	cmd.Flags().BoolVarP(&options.NoGitCredentialsInit, "no-git-init", "", false, "Disables checking we have setup git credentials on startup")
 	return cmd
 }
 
 // Run will implement this command
 func (o *ControllerPipelineRunnerOptions) Run() error {
-	if !o.NoGitCredeentialsInit {
+	if !o.NoGitCredentialsInit {
 		err := o.InitGitConfigAndUser()
 		if err != nil {
 			return err
@@ -179,11 +181,12 @@ func (o *ControllerPipelineRunnerOptions) startPipelineRun(w http.ResponseWriter
 		return
 	}
 
-	// lets change this to support new pipelineresource type that handles batches
-	if len(pj.Refs.Pulls) > 0 {
+	// Only if there is one Pull in Refs, it's a PR build so we are going to pass it
+	if len(pj.Refs.Pulls) == 1 {
 		revision = pj.Refs.Pulls[0].SHA
 		prNumber = strconv.Itoa(pj.Refs.Pulls[0].Number)
 	} else {
+		//Otherwise it's a Master / Batch build, and we handle it later
 		revision = pj.Refs.BaseSHA
 	}
 
@@ -202,7 +205,7 @@ func (o *ControllerPipelineRunnerOptions) startPipelineRun(w http.ResponseWriter
 		revision = "master"
 	}
 
-	pr := &StepCreateTaskOptions{}
+	pr := &create.StepCreateTaskOptions{}
 	if pj.Type == prowapi.PostsubmitJob {
 		pr.PipelineKind = jenkinsfile.PipelineKindRelease
 	} else {
@@ -299,11 +302,11 @@ func (o *ControllerPipelineRunnerOptions) returnError(err error, message string,
 }
 
 func (o *ControllerPipelineRunnerOptions) stepGitCredentials() error {
-	if !o.NoGitCredeentialsInit {
+	if !o.NoGitCredentialsInit {
 		copy := *o.CommonOptions
 		copy.BatchMode = true
-		gsc := &StepGitCredentialsOptions{
-			StepOptions: StepOptions{
+		gsc := &git.StepGitCredentialsOptions{
+			StepOptions: opts.StepOptions{
 				CommonOptions: &copy,
 			},
 		}

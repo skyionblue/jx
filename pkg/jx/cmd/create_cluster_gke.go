@@ -3,9 +3,10 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"github.com/jenkins-x/jx/pkg/jx/cmd/helper"
 	"strings"
 	"time"
+
+	"github.com/jenkins-x/jx/pkg/jx/cmd/helper"
 
 	"github.com/Pallinder/go-randomdata"
 	"github.com/jenkins-x/jx/pkg/cloud"
@@ -189,9 +190,25 @@ func (o *CreateClusterGKEOptions) createClusterGKE() error {
 		return err
 	}
 
-	if o.Flags.ClusterName == "" {
-		o.Flags.ClusterName = strings.ToLower(randomdata.SillyName())
-		log.Infof("No cluster name provided so using a generated one: %s\n", o.Flags.ClusterName)
+	advanced := o.InstallOptions.Flags.Advanced
+
+	clusterName := o.Flags.ClusterName
+	if clusterName == "" {
+		defaultClusterName := strings.ToLower(randomdata.SillyName())
+		if advanced {
+			prompt := &survey.Input{
+				Message: "What cluster name would you like to use",
+				Default: defaultClusterName,
+			}
+
+			err = survey.AskOne(prompt, &clusterName, nil, surveyOpts)
+			if err != nil {
+				return err
+			}
+		} else {
+			clusterName = defaultClusterName
+			log.Infof("No cluster name provided so using a generated one: %s", util.ColorPrompt(clusterName))
+		}
 	}
 
 	region := o.Flags.Region
@@ -207,7 +224,7 @@ func (o *CreateClusterGKEOptions) createClusterGKE() error {
 
 			if o.InstallOptions.Flags.NextGeneration {
 				log.Infof(util.ColorWarning("Defaulting to zonal cluster type as --ng is selected.\n"))
-			} else {
+			} else if advanced {
 				prompts := &survey.Select{
 					Message: "What type of cluster would you like to create",
 					Options: []string{"Regional", "Zonal"},
@@ -219,6 +236,8 @@ func (o *CreateClusterGKEOptions) createClusterGKE() error {
 				if err != nil {
 					return err
 				}
+			} else {
+				log.Infof("Defaulting to cluster type: %s", util.ColorPrompt(clusterType))
 			}
 
 			if "Regional" == clusterType {
@@ -241,17 +260,23 @@ func (o *CreateClusterGKEOptions) createClusterGKE() error {
 
 	machineType := o.Flags.MachineType
 	if machineType == "" {
-		prompts := &survey.Select{
-			Message:  "Google Cloud Machine Type:",
-			Options:  gke.GetGoogleMachineTypes(),
-			Help:     "We recommend a minimum of n1-standard-2 for Jenkins X,  a table of machine descriptions can be found here https://cloud.google.com/kubernetes-engine/docs/concepts/cluster-architecture",
-			PageSize: 10,
-			Default:  "n1-standard-2",
-		}
+		defaultMachineType := "n1-standard-2"
+		if advanced {
+			prompts := &survey.Select{
+				Message:  "Google Cloud Machine Type:",
+				Options:  gke.GetGoogleMachineTypes(),
+				Help:     "We recommend a minimum of n1-standard-2 for Jenkins X,  a table of machine descriptions can be found here https://cloud.google.com/kubernetes-engine/docs/concepts/cluster-architecture",
+				PageSize: 10,
+				Default:  defaultMachineType,
+			}
+			err := survey.AskOne(prompts, &machineType, nil, surveyOpts)
 
-		err := survey.AskOne(prompts, &machineType, nil, surveyOpts)
-		if err != nil {
-			return err
+			if err != nil {
+				return err
+			}
+		} else {
+			machineType = defaultMachineType
+			log.Infof("Defaulting to machine type: %s", util.ColorPrompt(machineType))
 		}
 	}
 
@@ -261,15 +286,20 @@ func (o *CreateClusterGKEOptions) createClusterGKE() error {
 		if region != "" {
 			defaultNodes = "1"
 		}
-		prompt := &survey.Input{
-			Message: "Minimum number of Nodes (per zone)",
-			Default: defaultNodes,
-			Help:    "We recommend a minimum of " + defaultNodes + " for Jenkins X, the minimum number of nodes to be created in each of the cluster's zones",
-		}
+		if advanced {
+			prompt := &survey.Input{
+				Message: "Minimum number of Nodes (per zone)",
+				Default: defaultNodes,
+				Help:    "We recommend a minimum of " + defaultNodes + " for Jenkins X, the minimum number of nodes to be created in each of the cluster's zones",
+			}
 
-		err = survey.AskOne(prompt, &minNumOfNodes, nil, surveyOpts)
-		if err != nil {
-			return err
+			err = survey.AskOne(prompt, &minNumOfNodes, nil, surveyOpts)
+			if err != nil {
+				return err
+			}
+		} else {
+			minNumOfNodes = defaultNodes
+			log.Infof("Defaulting to minimum number of nodes: %s", util.ColorPrompt(minNumOfNodes))
 		}
 	}
 
@@ -279,28 +309,38 @@ func (o *CreateClusterGKEOptions) createClusterGKE() error {
 		if region != "" {
 			defaultNodes = "2"
 		}
-		prompt := &survey.Input{
-			Message: "Maximum number of Nodes",
-			Default: defaultNodes,
-			Help:    "We recommend at least " + defaultNodes + " for Jenkins X, the maximum number of nodes to be created in each of the cluster's zones",
-		}
+		if advanced {
+			prompt := &survey.Input{
+				Message: "Maximum number of Nodes",
+				Default: defaultNodes,
+				Help:    "We recommend at least " + defaultNodes + " for Jenkins X, the maximum number of nodes to be created in each of the cluster's zones",
+			}
 
-		err = survey.AskOne(prompt, &maxNumOfNodes, nil, surveyOpts)
-		if err != nil {
-			return err
+			err = survey.AskOne(prompt, &maxNumOfNodes, nil, surveyOpts)
+			if err != nil {
+				return err
+			}
+		} else {
+			maxNumOfNodes = defaultNodes
+			log.Infof("Defaulting to maxiumum number of nodes: %s", util.ColorPrompt(maxNumOfNodes))
 		}
 	}
 
 	if !o.BatchMode {
 		if !o.IsFlagExplicitlySet(preemptibleFlagName) {
-			prompt := &survey.Confirm{
-				Message: "Would you like use preemptible VMs?",
-				Default: false,
-				Help:    "Preemptible VMs can significantly lower the cost of a cluster",
-			}
-			err = survey.AskOne(prompt, &o.Flags.Preemptible, nil, surveyOpts)
-			if err != nil {
-				return err
+			if advanced {
+				prompt := &survey.Confirm{
+					Message: "Would you like to use preemptible VMs?",
+					Default: false,
+					Help:    "Preemptible VMs can significantly lower the cost of a cluster",
+				}
+				err = survey.AskOne(prompt, &o.Flags.Preemptible, nil, surveyOpts)
+				if err != nil {
+					return err
+				}
+			} else {
+				o.Flags.Preemptible = false
+				log.Infof("Defaulting use of preemptible VMs: %v", util.ColorPrompt(util.YesNo(o.Flags.Preemptible)))
 			}
 		}
 	}
@@ -314,14 +354,19 @@ func (o *CreateClusterGKEOptions) createClusterGKE() error {
 	if !o.BatchMode {
 		// if scopes is empty &
 		if len(o.Flags.Scopes) == 0 && !o.IsFlagExplicitlySet(enhancedScopesFlagName) {
-			prompt := &survey.Confirm{
-				Message: "Would you like to access Google Cloud Storage / Google Container Registry?",
-				Default: o.InstallOptions.Flags.DockerRegistry == "",
-				Help:    "Enables enhanced oauth scopes to allow access to storage based services",
-			}
-			err = survey.AskOne(prompt, &o.Flags.EnhancedScopes, nil, surveyOpts)
-			if err != nil {
-				return err
+			if advanced {
+				prompt := &survey.Confirm{
+					Message: "Would you like to access Google Cloud Storage / Google Container Registry?",
+					Default: o.InstallOptions.Flags.DockerRegistry == "",
+					Help:    "Enables enhanced oauth scopes to allow access to storage based services",
+				}
+				err = survey.AskOne(prompt, &o.Flags.EnhancedScopes, nil, surveyOpts)
+				if err != nil {
+					return err
+				}
+			} else {
+				o.Flags.EnhancedScopes = true
+				log.Infof("Defaulting access to Google Cloud Storage / Google Container Registry: %v", util.ColorPrompt(util.YesNo(o.Flags.EnhancedScopes)))
 			}
 		}
 	}
@@ -340,14 +385,19 @@ func (o *CreateClusterGKEOptions) createClusterGKE() error {
 		// only provide the option if enhanced scopes are enabled
 		if o.Flags.EnhancedScopes {
 			if !o.IsFlagExplicitlySet(enhancedAPIFlagName) {
-				prompt := &survey.Confirm{
-					Message: "Would you like to enable Cloud Build, Container Registry & Container Analysis APIs?",
-					Default: o.Flags.EnhancedScopes,
-					Help:    "Enables extra APIs on the GCP project",
-				}
-				err = survey.AskOne(prompt, &o.Flags.EnhancedApis, nil, surveyOpts)
-				if err != nil {
-					return err
+				if advanced {
+					prompt := &survey.Confirm{
+						Message: "Would you like to enable Cloud Build, Container Registry & Container Analysis APIs?",
+						Default: o.Flags.EnhancedScopes,
+						Help:    "Enables extra APIs on the GCP project",
+					}
+					err = survey.AskOne(prompt, &o.Flags.EnhancedApis, nil, surveyOpts)
+					if err != nil {
+						return err
+					}
+				} else {
+					o.Flags.EnhancedApis = true
+					log.Infof("Defaulting enabling Cloud Build, Container Registry & Container Analysis API's: %v", util.ColorPrompt(util.YesNo(o.Flags.EnhancedApis)))
 				}
 			}
 		}
@@ -365,14 +415,19 @@ func (o *CreateClusterGKEOptions) createClusterGKE() error {
 	if !o.BatchMode {
 		// only provide the option if enhanced scopes are enabled
 		if o.Flags.EnhancedScopes && !o.InstallOptions.Flags.Kaniko {
-			prompt := &survey.Confirm{
-				Message: "Would you like to enable Kaniko for building container images",
-				Default: o.Flags.EnhancedScopes,
-				Help:    "Use Kaniko for docker images",
-			}
-			err = survey.AskOne(prompt, &o.InstallOptions.Flags.Kaniko, nil, surveyOpts)
-			if err != nil {
-				return err
+			if advanced {
+				prompt := &survey.Confirm{
+					Message: "Would you like to enable Kaniko for building container images",
+					Default: o.Flags.EnhancedScopes,
+					Help:    "Use Kaniko for docker images",
+				}
+				err = survey.AskOne(prompt, &o.InstallOptions.Flags.Kaniko, nil, surveyOpts)
+				if err != nil {
+					return err
+				}
+			} else {
+				o.InstallOptions.Flags.Kaniko = false
+				log.Infof("Defaulting enabling Kaniko for building container images: %v", util.ColorPrompt(util.YesNo(o.InstallOptions.Flags.Kaniko)))
 			}
 		}
 	}
@@ -391,7 +446,7 @@ func (o *CreateClusterGKEOptions) createClusterGKE() error {
 
 	// mandatory flags are machine type, num-nodes, zone or region
 	args := []string{"container", "clusters", "create",
-		o.Flags.ClusterName,
+		clusterName,
 		"--num-nodes", minNumOfNodes,
 		"--machine-type", machineType,
 		"--enable-autoscaling",
@@ -461,14 +516,14 @@ func (o *CreateClusterGKEOptions) createClusterGKE() error {
 
 	log.Info("Initialising cluster ...\n")
 	if o.InstallOptions.Flags.DefaultEnvironmentPrefix == "" {
-		o.InstallOptions.Flags.DefaultEnvironmentPrefix = o.Flags.ClusterName
+		o.InstallOptions.Flags.DefaultEnvironmentPrefix = clusterName
 	}
 
 	o.InstallOptions.setInstallValues(map[string]string{
 		kube.Zone:        zone,
 		kube.Region:      region,
 		kube.ProjectID:   projectId,
-		kube.ClusterName: o.Flags.ClusterName,
+		kube.ClusterName: clusterName,
 	})
 
 	err = o.initAndInstall(cloud.GKE)
@@ -476,7 +531,7 @@ func (o *CreateClusterGKEOptions) createClusterGKE() error {
 		return err
 	}
 
-	getCredsCommand := []string{"container", "clusters", "get-credentials", o.Flags.ClusterName}
+	getCredsCommand := []string{"container", "clusters", "get-credentials", clusterName}
 	if "" != zone {
 		getCredsCommand = append(getCredsCommand, "--zone", zone)
 	} else if "" != region {

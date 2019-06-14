@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/jenkins-x/jx/pkg/log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,7 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jenkins-x/jx/pkg/apis/jenkins.io/v1"
+	"github.com/jenkins-x/jx/pkg/log"
+
+	v1 "github.com/jenkins-x/jx/pkg/apis/jenkins.io/v1"
 	"github.com/jenkins-x/jx/pkg/util"
 	"github.com/knative/pkg/apis"
 	"github.com/pkg/errors"
@@ -94,7 +95,8 @@ type Timeout struct {
 	Unit TimeoutUnit `json:"unit,omitempty"`
 }
 
-func (t Timeout) toDuration() (*metav1.Duration, error) {
+// ToDuration generates a duration struct from a Timeout
+func (t *Timeout) ToDuration() (*metav1.Duration, error) {
 	durationStr := ""
 	// TODO: Populate a default timeout unit, most likely seconds.
 	if t.Unit != "" {
@@ -1442,10 +1444,13 @@ func generateSteps(step Step, inheritedAgent, sourceDir string, baseWorkingDir *
 
 		steps = append(steps, *c)
 	} else if step.Loop != nil {
-		for _, v := range step.Loop.Values {
+		for i, v := range step.Loop.Values {
 			loopEnv := scopedEnv([]corev1.EnvVar{{Name: step.Loop.Variable, Value: v}}, env)
 
 			for _, s := range step.Loop.Steps {
+				if s.Name != "" {
+					s.Name = s.Name + strconv.Itoa(1+i)
+				}
 				loopSteps, loopVolumes, loopCounter, loopErr := generateSteps(s, stepImage, sourceDir, baseWorkingDir, loopEnv, parentContainer, podTemplates, stepCounter)
 				if loopErr != nil {
 					return nil, nil, loopCounter, loopErr
@@ -1542,7 +1547,7 @@ func (j *ParsedPipeline) GenerateCRDs(pipelineIdentifier string, buildIdentifier
 		if o.RootOptions != nil {
 			if o.Retry > 0 {
 				stage.Stage.Options.Retry = s.Options.Retry
-				log.Infof("setting retries to %d for stage %s", stage.Stage.Options.Retry, stage.Stage.Name)
+				log.Logger().Infof("setting retries to %d for stage %s", stage.Stage.Options.Retry, stage.Stage.Name)
 			}
 		}
 		previousStage = stage

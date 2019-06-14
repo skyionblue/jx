@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -27,21 +26,6 @@ import (
 
 	"github.com/jenkins-x/jx/cmd/jx/app"
 )
-
-type TestSystemWriter struct {
-	wrapped io.Writer
-}
-
-var coverageOutputRegex = regexp.MustCompile(`(?m:^coverage: ([\d\.]*%) of statements in [\w\.\/]*$)`)
-var passOutputRegex = regexp.MustCompile(`(?m:^PASS$)`)
-
-func (t TestSystemWriter) Write(p []byte) (n int, err error) {
-	s := string(p)
-	s = coverageOutputRegex.ReplaceAllString(s, "")
-	s = passOutputRegex.ReplaceAllString(s, "")
-	_, err = t.wrapped.Write([]byte(s))
-	return len(p), err
-}
 
 func TestSystem(t *testing.T) {
 	disableCoverage := os.Getenv("COVER_JX_BINARY") == "false"
@@ -75,7 +59,7 @@ func TestSystem(t *testing.T) {
 				}
 				err := os.MkdirAll(reportsDir, 0700)
 				if err != nil {
-					log.Errorf("Error making reports directory %s %v", reportsDir, err)
+					log.Logger().Errorf("Error making reports directory %s %v", reportsDir, err)
 				}
 				id = "jx"
 				for _, arg := range args[1:] {
@@ -90,7 +74,7 @@ func TestSystem(t *testing.T) {
 				args[1] = fmt.Sprintf("-test.coverprofile=%s", outFile)
 			} else if !disableSelfUpload {
 				// TODO support this
-				log.Errorf("Self upload is not supported if -test.coverprofile is specified. Disabling it.")
+				log.Logger().Errorf("Self upload is not supported if -test.coverprofile is specified. Disabling it.")
 				disableSelfUpload = true
 			}
 			cmd := util.Command{
@@ -99,26 +83,24 @@ func TestSystem(t *testing.T) {
 				},
 				Args: args[1:],
 				Name: os.Args[0],
-				Out: TestSystemWriter{
-					wrapped: os.Stdout,
-				},
-				In:  os.Stdin,
-				Err: os.Stderr,
+				Out:  os.Stdout,
+				In:   os.Stdin,
+				Err:  os.Stderr,
 			}
 			_, err := cmd.RunWithoutRetry()
 			if !disableSelfUpload {
 				if os.Getenv("CODECOV_TOKEN") == "" {
-					log.Errorf("cannot upload to codecov because CODECOV_TOKEN environment variable is not set")
+					log.Logger().Errorf("cannot upload to codecov because CODECOV_TOKEN environment variable is not set")
 				} else {
 					err := uploadToCodecov(outFile, id)
 					if err != nil {
-						log.Errorf("cannot upload to codecov because %v", err)
+						log.Logger().Errorf("cannot upload to codecov because %v", err)
 					}
 				}
 
 			}
 			if err != nil {
-				log.Error(err.Error())
+				log.Logger().Error(err.Error())
 				os.Exit(1)
 			}
 			os.Exit(0)
@@ -172,8 +154,8 @@ func uploadToCodecov(outFile string, name string) error {
 	}
 	out, err := cmd.RunWithoutRetry()
 	if err != nil {
-		log.Errorf("Running %s", cmd.String())
-		log.Errorf(out)
+		log.Logger().Errorf("Running %s", cmd.String())
+		log.Logger().Errorf(out)
 		return errors.Wrapf(err, "error uploading coverage to codecov.io")
 
 	}

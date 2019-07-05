@@ -14,13 +14,13 @@ pipelineConfig:
           - name: release
             environment:
               - name: GIT_COMMITTER_EMAIL
-                value: jenkins-x@googlegroups.com
+                value: PIDJenkins-k8s-botT@verisk.com
               - name: GIT_AUTHOR_EMAIL
-                value: jenkins-x@googlegroups.com
+                value: PIDJenkins-k8s-botT@verisk.com
               - name: GIT_AUTHOR_NAME
-                value: jenkins-x-bot
+                value: PIDJENKINSKSBOTT
               - name: GIT_COMMITTER_NAME
-                value: jenkins-x-bot
+                value: PIDJENKINSKSBOTT
               - name: BASE_WORKSPACE
                 value: /workspace/source
               - name: HELM_HOME
@@ -151,13 +151,13 @@ pipelineConfig:
           - name: bdd-baseline
             environment:
             - name: GIT_COMMITTER_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_EMAIL
-              value: jenkins-x@googlegroups.com
+              value: PIDJenkins-k8s-botT@verisk.com
             - name: GIT_AUTHOR_NAME
-              value: jenkins-x-bot
+              value: PIDJENKINSKSBOTT
             - name: GIT_COMMITTER_NAME
-              value: jenkins-x-bot
+              value: PIDJENKINSKSBOTT
             - name: BASE_WORKSPACE
               value: /workspace/source
             - name: GOPROXY

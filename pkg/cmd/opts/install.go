@@ -65,6 +65,7 @@ jenkinsLocationConfiguration.save()
 const (
 	AdminSecretsFile            = "adminSecrets.yaml"
 	ExtraValuesFile             = "extraValues.yaml"
+	ValuesFile                  = "values.yaml"
 	JXInstallConfig             = "jx-install-config"
 	CloudEnvValuesFile          = "myvalues.yaml"
 	CloudEnvSecretsFile         = "secrets.yaml"
@@ -1265,6 +1266,9 @@ func (o *CommonOptions) InstallMinikube() error {
 		return err
 	}
 	clientURL := fmt.Sprintf("https://github.com/kubernetes/minikube/releases/download/v%s/minikube-%s-%s", latestVersion, runtime.GOOS, runtime.GOARCH)
+	if runtime.GOOS == "windows" {
+		clientURL += ".exe"
+	}
 	fullPath := filepath.Join(binDir, fileName)
 	tmpFile := fullPath + ".tmp"
 	err = packages.DownloadFile(clientURL, tmpFile)
@@ -1675,7 +1679,7 @@ func (o *CommonOptions) InstallProw(useTekton bool, useExternalDNS bool, isGitOp
 		return errors.Wrap(err, "reading the team settings")
 	}
 
-	log.Logger().Infof("\nSetting up prow config into namespace %s", util.ColorInfo(devNamespace))
+	log.Logger().Infof("Setting up prow config into namespace %s", util.ColorInfo(devNamespace))
 
 	// create initial configmaps if they don't already exist, use a dummy repo so tide doesn't start scanning all github
 	_, err = client.CoreV1().ConfigMaps(devNamespace).Get("config", metav1.GetOptions{})
@@ -1690,7 +1694,7 @@ func (o *CommonOptions) InstallProw(useTekton bool, useExternalDNS bool, isGitOp
 	if !useTekton {
 		knativeOrTekton = "knative"
 	}
-	log.Logger().Infof("\nInstalling %s into namespace %s", knativeOrTekton, util.ColorInfo(devNamespace))
+	log.Logger().Infof("Installing %s into namespace %s", knativeOrTekton, util.ColorInfo(devNamespace))
 
 	ksecretValues := []string{}
 	if settings.HelmTemplate || settings.NoTiller || settings.HelmBinary != "helm" {
@@ -1754,7 +1758,7 @@ func (o *CommonOptions) InstallProw(useTekton bool, useExternalDNS bool, isGitOp
 		}
 	}
 
-	log.Logger().Infof("\nInstalling Prow into namespace %s", util.ColorInfo(devNamespace))
+	log.Logger().Infof("Installing Prow into namespace %s", util.ColorInfo(devNamespace))
 
 	for _, value := range valuesFiles {
 		log.Logger().Infof("with values file %s", util.ColorInfo(value))
@@ -1796,7 +1800,7 @@ func (o *CommonOptions) CreateWebhookProw(gitURL string, gitProvider gits.GitPro
 	if err != nil {
 		return err
 	}
-	baseURL, err := services.GetServiceURLFromName(client, "hook", ns)
+	baseURL, err := services.FindServiceURL(client, ns, "hook")
 	if err != nil {
 		return errors.Wrapf(err, "in namespace %s", ns)
 	}

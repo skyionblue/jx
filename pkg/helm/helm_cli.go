@@ -122,7 +122,7 @@ func (h *HelmCLI) Init(clientOnly bool, serviceAccount string, tillerNamespace s
 	}
 
 	if h.Debug {
-		log.Logger().Infof("Initialising Helm '%s'", util.ColorInfo(strings.Join(args, " ")))
+		log.Logger().Debugf("Initialising Helm '%s'", util.ColorInfo(strings.Join(args, " ")))
 	}
 
 	return h.runHelm(args...)
@@ -214,7 +214,7 @@ func (h *HelmCLI) IsRepoMissing(URL string) (bool, string, error) {
 				return true, "", errors.Wrap(err, "failed to parse the repo URL")
 			}
 			// match on the whole URL as helm dep build requires on username + passowrd in the URL
-			if url.Host == searchedURL.Host {
+			if url.Host == searchedURL.Host && url.Path == searchedURL.Path {
 				return false, name, nil
 			}
 		}
@@ -246,6 +246,12 @@ func (h *HelmCLI) RemoveRequirementsLock() error {
 
 // BuildDependency builds the helm dependencies of the helm chart from the current working directory
 func (h *HelmCLI) BuildDependency() error {
+	if h.Debug {
+		log.Logger().Infof("Running %s dependency build in %s\n", h.Binary, util.ColorInfo(h.CWD))
+		out, err := h.runHelmWithOutput("dependency", "build")
+		log.Logger().Infof(out)
+		return err
+	}
 	return h.runHelm("dependency", "build")
 }
 
@@ -372,7 +378,7 @@ func (h *HelmCLI) Template(chart string, releaseName string, ns string, outDir s
 	}
 
 	if h.Debug {
-		log.Logger().Infof("Generating Chart Template '%s'", util.ColorInfo(strings.Join(args, " ")))
+		log.Logger().Debugf("Generating Chart Template '%s'", util.ColorInfo(strings.Join(args, " ")))
 	}
 	err := h.runHelm(args...)
 	if err != nil {

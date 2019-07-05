@@ -3,6 +3,7 @@ package pipelinescheduler
 import (
 	"github.com/davecgh/go-spew/spew"
 	jenkinsv1 "github.com/jenkins-x/jx/pkg/apis/jenkins.io/v1"
+	"github.com/jenkins-x/jx/pkg/util"
 	"github.com/pkg/errors"
 )
 
@@ -70,6 +71,12 @@ func Build(schedulers []*jenkinsv1.SchedulerSpec) (*jenkinsv1.SchedulerSpec, err
 				answer.Merger = parent.Merger
 			} else if parent.Merger != nil {
 				applyToMerger(parent.Merger, answer.Merger)
+			}
+			if answer.Periodics == nil {
+				answer.Periodics = parent.Periodics
+			}
+			if answer.Attachments == nil {
+				answer.Attachments = parent.Attachments
 			}
 		}
 	}
@@ -198,7 +205,11 @@ func applyToReplaceableSliceOfStrings(parent *jenkinsv1.ReplaceableSliceOfString
 		if child.Items == nil {
 			child.Items = make([]string, 0)
 		}
-		child.Items = append(child.Items, parent.Items...)
+		for i := range parent.Items {
+			if !util.Contains(child.Items, parent.Items[i]) {
+				child.Items = append(child.Items, parent.Items[i])
+			}
+		}
 	}
 }
 
@@ -472,10 +483,10 @@ func applyToPreSubmits(parentPresubmits *jenkinsv1.Presubmits, childPresubmits *
 			} else if parent.Policy != nil {
 				applyToProtectionPolicies(parent.Policy, child.Policy)
 			}
-			if child.Query == nil {
-				child.Query = parent.Query
-			} else if parent.Query != nil {
-				applyToQuery(parent.Query, child.Query)
+			if child.Queries == nil {
+				child.Queries = parent.Queries
+			} else if parent.Queries != nil {
+				applyToQueries(parent.Queries, child.Queries)
 			}
 		}
 	}
@@ -500,31 +511,8 @@ func applyToProtectionPolicies(parent *jenkinsv1.ProtectionPolicies,
 	}
 }
 
-func applyToQuery(parent *jenkinsv1.Query, child *jenkinsv1.Query) {
-	if child.ReviewApprovedRequired == nil {
-		child.ReviewApprovedRequired = parent.ReviewApprovedRequired
-	}
-	if child.Milestone == nil {
-		child.Milestone = parent.Milestone
-	}
-	if child.MissingLabels == nil {
-		child.MissingLabels = parent.MissingLabels
-	} else if parent.MissingLabels != nil {
-		applyToReplaceableSliceOfStrings(parent.MissingLabels, child.MissingLabels)
-	}
-	if child.IncludedBranches == nil {
-		child.IncludedBranches = parent.IncludedBranches
-	} else if parent.IncludedBranches != nil {
-		applyToReplaceableSliceOfStrings(parent.IncludedBranches, child.IncludedBranches)
-	}
-	if child.ExcludedBranches == nil {
-		child.ExcludedBranches = parent.ExcludedBranches
-	} else if parent.ExcludedBranches != nil {
-		applyToReplaceableSliceOfStrings(parent.ExcludedBranches, child.ExcludedBranches)
-	}
-	if child.Labels == nil {
-		child.Labels = parent.Labels
-	} else if parent.Labels != nil {
-		applyToReplaceableSliceOfStrings(parent.Labels, child.Labels)
+func applyToQueries(parents []*jenkinsv1.Query, children []*jenkinsv1.Query) {
+	for _, v := range parents {
+		children = append(children, v)
 	}
 }

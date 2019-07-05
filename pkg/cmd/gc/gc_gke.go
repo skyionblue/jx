@@ -15,7 +15,7 @@ import (
 
 	"os"
 
-	gojenkins "github.com/jenkins-x/golang-jenkins"
+	"github.com/jenkins-x/golang-jenkins"
 	"github.com/jenkins-x/jx/pkg/cmd/opts"
 	"github.com/jenkins-x/jx/pkg/cmd/templates"
 	"github.com/jenkins-x/jx/pkg/log"
@@ -44,6 +44,8 @@ var (
 		jx garbage collect gke
 		jx gc gke
 `)
+
+	ServiceAccountSuffixes = []string{"-vt", "-ko", "-tf"}
 )
 
 type Rules struct {
@@ -55,12 +57,38 @@ type Rule struct {
 	TargetTags []string `json:"targetTags"`
 }
 
+type cluster struct {
+	Name string `json:"name"`
+}
+
 type address struct {
 	Name   string `json:"name"`
 	Region string `json:"region"`
 }
 
-// NewCmd s a command object for the "step" command
+type zone struct {
+	Name string `json:"name"`
+}
+
+type disk struct {
+	Name string `json:"name"`
+}
+
+type serviceAccount struct {
+	DisplayName string `json:"displayName"`
+	Email       string `json:"email"`
+}
+
+type iamPolicy struct {
+	Bindings []iamBinding `json:"bindings"`
+}
+
+type iamBinding struct {
+	Members []string `json:"members"`
+	Role    string   `json:"role"`
+}
+
+// NewCmdGCGKE is a command object for the "step" command
 func NewCmdGCGKE(commonOpts *opts.CommonOptions) *cobra.Command {
 	options := &GCGKEOptions{
 		CommonOptions: commonOpts,
@@ -95,7 +123,9 @@ func (o *GCGKEOptions) Run() error {
 
 	os.Remove(path)
 
-	message := `
+	message := `#!/bin/bash
+
+set -euo pipefail
 
 ###################################################################################################
 #
@@ -106,7 +136,9 @@ func (o *GCGKEOptions) Run() error {
 
 %s
 
-%v
+%s
+
+%s
 
 %s
 
@@ -130,13 +162,18 @@ func (o *GCGKEOptions) Run() error {
 		return err
 	}
 
-	data := fmt.Sprintf(message, fw, disks, addr)
+	serviceAccounts, err := o.cleanUpServiceAccounts()
+	if err != nil {
+		return err
+	}
+
+	data := fmt.Sprintf(message, fw, strings.Join(disks, "\n"), strings.Join(addr, "\n"), strings.Join(serviceAccounts, "\n"))
 	data = strings.Replace(data, "[", "", -1)
 	data = strings.Replace(data, "]", "", -1)
 
 	err = ioutil.WriteFile("gc_gke.sh", []byte(data), util.DefaultWritePermissions)
 
-	log.Logger().Info("Script 'gc_gke.sh' created!\n")
+	log.Logger().Info("Script 'gc_gke.sh' created!")
 	return nil
 }
 
@@ -198,27 +235,21 @@ func (p *GCGKEOptions) cleanUpFirewalls() (string, error) {
 }
 
 func (o *GCGKEOptions) cleanUpPersistentDisks() ([]string, error) {
-
-	cmd := "gcloud compute zones list | grep -v NAME | awk '{printf $1 \" \"}'"
-
-	rs, err := o.GetCommandOutput("", "bash", "-c", cmd)
+	zones, err := o.getZones()
 	if err != nil {
 		return nil, err
 	}
-	zones := strings.Split(rs, " ")
 	var line []string
 
 	for _, z := range zones {
-		diskCmd := fmt.Sprintf("gcloud compute disks list --filter=\"NOT users:* AND zone:(%s)\" | grep -v NAME | awk '{printf $1 \" \"}'", z)
-		diskRs, err := o.GetCommandOutput("", "bash", "-c", diskCmd)
+		disks, err := o.getUnusedDisksForZone(z)
 		if err != nil {
 			return nil, err
 		}
 
-		disks := strings.Split(diskRs, " ")
 		for _, d := range disks {
-			if strings.HasPrefix(d, "gke-") {
-				line = append(line, fmt.Sprintf("gcloud compute disks delete --zone=%s --quiet %s\n", z, d))
+			if strings.HasPrefix(d.Name, "gke-") {
+				line = append(line, fmt.Sprintf("gcloud compute disks delete --zone=%s --quiet %s", z.Name, d.Name))
 			}
 		}
 	}
@@ -254,13 +285,49 @@ func (o *GCGKEOptions) cleanUpAddresses() ([]string, error) {
 			} else {
 				scope = "--global"
 			}
-			line = append(line, fmt.Sprintf("gcloud compute addresses delete %s %s\n", address.Name, scope))
+			line = append(line, fmt.Sprintf("gcloud compute addresses delete %s %s", address.Name, scope))
 		}
 		return line, nil
 	}
 
 	if len(line) == 0 {
 		line = append(line, "# No addresses found for deletion\n")
+	}
+
+	return line, nil
+}
+
+func (o *GCGKEOptions) cleanUpServiceAccounts() ([]string, error) {
+	serviceAccounts, err := o.getFilteredServiceAccounts()
+	if err != nil {
+		return nil, err
+	}
+	var line []string
+
+	if len(serviceAccounts) > 0 {
+		for _, sa := range serviceAccounts {
+			line = append(line, fmt.Sprintf("gcloud iam service-accounts delete %s --quiet", sa.Email))
+		}
+	}
+
+	if len(line) == 0 {
+		line = append(line, "# No service accounts found for deletion\n")
+	}
+
+	policy, err := o.getIamPolicy()
+	if err != nil {
+		return nil, err
+	}
+
+	iam, err := o.determineUnusedIamBindings(policy)
+	if err != nil {
+		return nil, err
+	}
+
+	line = append(line, iam...)
+
+	if len(line) == 0 {
+		line = append(line, "# No service accounts found for deletion\n")
 	}
 
 	return line, nil
@@ -277,4 +344,179 @@ func contains(s []string, e string) bool {
 
 func getLastString(s []string) string {
 	return s[len(s)-1]
+}
+
+func (o *GCGKEOptions) getZones() ([]zone, error) {
+	cmd := "gcloud compute zones list --format=json"
+	data, err := o.GetCommandOutput("", "bash", "-c", cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	var zones []zone
+	err = json.Unmarshal([]byte(data), &zones)
+	if err != nil {
+		return nil, err
+	}
+
+	return zones, nil
+}
+
+func (o *GCGKEOptions) getClusters() ([]cluster, error) {
+	cmd := "gcloud container clusters list --format=json"
+	data, err := o.GetCommandOutput("", "bash", "-c", cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	var clusters []cluster
+	err = json.Unmarshal([]byte(data), &clusters)
+	if err != nil {
+		return nil, err
+	}
+
+	return clusters, nil
+}
+
+func (o *GCGKEOptions) getUnusedDisksForZone(z zone) ([]disk, error) {
+	diskCmd := fmt.Sprintf("gcloud compute disks list --filter=\"NOT users:* AND zone:(%s)\" --format=json", z.Name)
+	data, err := o.GetCommandOutput("", "bash", "-c", diskCmd)
+	if err != nil {
+		return nil, err
+	}
+
+	var disks []disk
+	err = json.Unmarshal([]byte(data), &disks)
+	if err != nil {
+		return nil, err
+	}
+
+	return disks, nil
+}
+
+func (o *GCGKEOptions) getFilteredServiceAccounts() ([]serviceAccount, error) {
+	serviceAccounts, err := o.getServiceAccounts()
+	if err != nil {
+		return nil, err
+	}
+
+	clusters, err := o.getClusters()
+	if err != nil {
+		return nil, err
+	}
+
+	filteredServiceAccounts := []serviceAccount{}
+	for _, sa := range serviceAccounts {
+		if isServiceAccount(sa.DisplayName) {
+			sz := len(sa.DisplayName)
+			clusterName := sa.DisplayName[:sz-3]
+
+			if !o.clusterExists(clusters, clusterName) {
+				log.Logger().Debugf("cluster %s does not exist", clusterName)
+				filteredServiceAccounts = append(filteredServiceAccounts, sa)
+			}
+		}
+	}
+
+	return filteredServiceAccounts, nil
+}
+
+func (o *GCGKEOptions) getServiceAccounts() ([]serviceAccount, error) {
+	cmd := "gcloud iam service-accounts list --format=json"
+	data, err := o.GetCommandOutput("", "bash", "-c", cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	var serviceAccounts []serviceAccount
+	err = json.Unmarshal([]byte(data), &serviceAccounts)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, sa := range serviceAccounts {
+		if sa.DisplayName == "" {
+			sa.DisplayName = sa.Email[:strings.IndexByte(sa.Email, '@')]
+		}
+	}
+	return serviceAccounts, nil
+}
+
+func (o *GCGKEOptions) clusterExists(clusters []cluster, clusterName string) bool {
+	for _, cluster := range clusters {
+		if cluster.Name == clusterName {
+			return true
+		}
+	}
+	return false
+}
+
+func (o *GCGKEOptions) getCurrentGoogleProjectId() (string, error) {
+	cmd := "gcloud config get-value core/project"
+	data, err := o.GetCommandOutput("", "bash", "-c", cmd)
+	if err != nil {
+		return "", err
+	}
+	return data, nil
+}
+func (o *GCGKEOptions) getIamPolicy() (iamPolicy, error) {
+	googleProjectID, err := o.getCurrentGoogleProjectId()
+	if err != nil {
+		return iamPolicy{}, err
+	}
+	cmd := fmt.Sprintf("gcloud projects get-iam-policy %s --format=json", googleProjectID)
+	data, err := o.GetCommandOutput("", "bash", "-c", cmd)
+	if err != nil {
+		return iamPolicy{}, err
+	}
+
+	var policy iamPolicy
+	err = json.Unmarshal([]byte(data), &policy)
+	if err != nil {
+		return iamPolicy{}, err
+	}
+
+	return policy, nil
+}
+
+func (o *GCGKEOptions) determineUnusedIamBindings(policy iamPolicy) ([]string, error) {
+	googleProjectID, err := o.getCurrentGoogleProjectId()
+	if err != nil {
+		return nil, err
+	}
+
+	var line []string
+
+	clusters, err := o.getClusters()
+	if err != nil {
+		return line, err
+	}
+	for _, b := range policy.Bindings {
+		for _, m := range b.Members {
+			if strings.HasPrefix(m, "serviceAccount:") {
+				saName := strings.TrimPrefix(m, "serviceAccount:")
+				displayName := saName[:strings.IndexByte(saName, '@')]
+
+				if isServiceAccount(displayName) {
+					sz := len(displayName)
+					clusterName := displayName[:sz-3]
+
+					if !o.clusterExists(clusters, clusterName) {
+						cmd := fmt.Sprintf("gcloud projects remove-iam-policy-binding %s --member=%s --role=%s --quiet", googleProjectID, m, b.Role)
+						line = append(line, cmd)
+					}
+				}
+			}
+		}
+	}
+	return line, nil
+}
+
+func isServiceAccount(sa string) bool {
+	for _, suffix := range ServiceAccountSuffixes {
+		if strings.HasSuffix(sa, suffix) {
+			return true
+		}
+	}
+	return false
 }

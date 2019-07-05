@@ -2,14 +2,18 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/jenkins-x/jx/pkg/cloud"
-	"github.com/jenkins-x/jx/pkg/cmd/create"
-	"github.com/jenkins-x/jx/pkg/cmd/deletecmd"
+	"github.com/jenkins-x/jx/pkg/cmd/step/e2e"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/jenkins-x/jx/pkg/cloud"
+	"github.com/jenkins-x/jx/pkg/cmd/create"
+	"github.com/jenkins-x/jx/pkg/cmd/deletecmd"
+	"github.com/jenkins-x/jx/pkg/kube/naming"
 
 	"github.com/jenkins-x/jx/pkg/cmd/helper"
 
@@ -64,6 +68,7 @@ type StepBDDFlags struct {
 	TestCases           []string
 	VersionsRepoPr      bool
 	BaseDomain          string
+	Dir                 string
 }
 
 var (
@@ -124,6 +129,7 @@ func NewCmdStepBDD(commonOpts *opts.CommonOptions) *cobra.Command {
 	cmd.Flags().BoolVarP(&options.Flags.IgnoreTestFailure, "parallel", "", false, "Should we process each cluster configuration in parallel")
 	cmd.Flags().BoolVarP(&options.Flags.UseRevision, "use-revision", "", true, "Use the git revision from the current git clone instead of the Pull Request branch")
 	cmd.Flags().BoolVarP(&options.Flags.VersionsRepoPr, "version-repo-pr", "", false, "For use with jenkins-x-versions PR. Indicates the git revision of the PR should be used to clone the jenkins-x-versions")
+	cmd.Flags().StringVarP(&options.Flags.Dir, "source-dir", "", ".", "the directory to run from where we look the requirements file")
 
 	cmd.Flags().StringVarP(&installOptions.Flags.Provider, "provider", "", "", "Cloud service providing the Kubernetes cluster.  Supported providers: "+cloud.KubernetesProviderOptions())
 
@@ -174,12 +180,16 @@ func (o *StepBDDOptions) Run() error {
 			return err
 		}
 
-		defer o.deleteCluster(cluster)
-
 		err = o.runTests(o.Flags.GoPath)
 		if err != nil {
 			log.Logger().Warnf("Failed to perform tests on cluster %s: %s", cluster.Name, err)
 			errors = append(errors, err)
+		} else {
+			err = o.deleteCluster(cluster)
+			if err != nil {
+				log.Logger().Warnf("Failed to delete cluster %s: %s", cluster.Name, err)
+				errors = append(errors, err)
+			}
 		}
 	}
 	return util.CombineErrors(errors...)
@@ -212,7 +222,7 @@ func (o *StepBDDOptions) runOnCurrentCluster() error {
 		if o.InstallOptions.Flags.Tekton {
 			teamPrefix += "tekton-"
 		}
-		team := kube.ToValidName(teamPrefix + gitProviderName + "-" + o.teamNameSuffix())
+		team := naming.ToValidName(teamPrefix + gitProviderName + "-" + o.teamNameSuffix())
 		log.Logger().Infof("Creating team %s", util.ColorInfo(team))
 
 		installOptions := o.InstallOptions
@@ -497,6 +507,8 @@ func (o *StepBDDOptions) reportStatus(testDir string, err error) error {
 	}
 
 	for _, cmd := range commands {
+		fmt.Println("")
+		fmt.Printf("Running %s\n\n", cmd.String())
 		cmd.Dir = testDir
 		cmd.Out = os.Stdout
 		cmd.Err = os.Stdout
@@ -531,11 +543,16 @@ func (o *StepBDDOptions) copyReports(testDir string, err error) error {
 }
 
 func (o *StepBDDOptions) createCluster(cluster *bdd.CreateCluster) error {
+	log.Logger().Infof("has %d post create cluster commands\n", len(cluster.Commands))
+	for _, cmd := range cluster.Commands {
+		log.Logger().Infof("post create command: %s\n", util.ColorInfo(cmd.Command+" "+strings.Join(cmd.Args, " ")))
+	}
+
 	buildNum := o.GetBuildNumber()
 	if buildNum == "" {
 		log.Logger().Warnf("No build number could be found from the environment variable $BUILD_NUMBER!")
 	}
-	baseClusterName := kube.ToValidName(cluster.Name)
+	baseClusterName := naming.ToValidName(cluster.Name)
 	revision := os.Getenv("PULL_PULL_SHA")
 	branch := o.GetBranchName(o.Flags.VersionsDir)
 	if branch == "" {
@@ -555,10 +572,44 @@ func (o *StepBDDOptions) createCluster(cluster *bdd.CreateCluster) error {
 
 	log.Logger().Infof("using versions git repo %s and ref %s", o.InstallOptions.Flags.VersionsRepository, o.InstallOptions.Flags.VersionsGitRef)
 
-	cluster.Name = kube.ToValidName(branch + "-" + buildNum + "-" + cluster.Name)
+	cluster.Name = naming.ToValidName(branch + "-" + buildNum + "-" + cluster.Name)
 	log.Logger().Infof("\nCreating cluster %s", util.ColorInfo(cluster.Name))
 	binary := o.Flags.JxBinary
 	args := cluster.Args
+
+	// lets modify the local requirements file if it exists
+	requirements, requirementsFile, err := config.LoadRequirementsConfig(o.Flags.Dir)
+	if err != nil {
+		return err
+	}
+	exists, err := util.FileExists(requirementsFile)
+	if err != nil {
+		return err
+	}
+	if exists {
+		if cluster.Name != requirements.ClusterName {
+			requirements.ClusterName = cluster.Name
+
+			// lets ensure that there's git repositories setup
+			o.ensureTestEnvironmentRepoSetup(requirements, "staging")
+			// TODO lets not do production just yet to avoid making too many git repos on github.com
+			//ensureTestEnvironmentRepoSetup(requirements, "production")
+
+			err = requirements.SaveConfig(requirementsFile)
+			if err != nil {
+				return errors.Wrapf(err, "failed to save file %s after setting the cluster name to %s", requirementsFile, cluster.Name)
+			}
+			log.Logger().Infof("wrote file %s after setting the cluster name to %s\n", requirementsFile, cluster.Name)
+
+			data, err := ioutil.ReadFile(requirementsFile)
+			if err != nil {
+				return errors.Wrapf(err, "failed to load file %s", requirementsFile)
+			}
+			log.Logger().Infof("%s is:\n", requirementsFile)
+			log.Logger().Infof("%s\n", util.ColorStatus(string(data)))
+			log.Logger().Info("\n")
+		}
+	}
 
 	if cluster.Terraform {
 		// use the cluster name as the organisation name
@@ -653,14 +704,98 @@ func (o *StepBDDOptions) createCluster(cluster *bdd.CreateCluster) error {
 
 	// work around for helm apply with GitOps using a k8s local Service URL
 	os.Setenv("CHART_REPOSITORY", kube.DefaultChartMuseumURL)
-	err := e.Run()
+	err = e.Run()
 	if err != nil {
 		log.Logger().Errorf("Error: Command failed  %s %s", binary, strings.Join(safeArgs, " "))
+	}
+	if err != nil {
+		return err
+	}
+
+	for _, c := range cluster.Commands {
+		e := exec.Command(c.Command, c.Args...)
+		e.Stdout = o.Out
+		e.Stderr = o.Err
+		os.Setenv("PATH", util.PathWithBinary())
+
+		// work around for helm apply with GitOps using a k8s local Service URL
+		os.Setenv("CHART_REPOSITORY", kube.DefaultChartMuseumURL)
+
+		log.Logger().Infof("running command: %s", util.ColorInfo(fmt.Sprintf("%s %s", c.Command, strings.Join(c.Args, " "))))
+
+		err := e.Run()
+		if err != nil {
+			log.Logger().Errorf("Error: Command failed  %s %s", c.Command, strings.Join(c.Args, " "))
+		}
+		if err != nil {
+			return err
+		}
 	}
 	return err
 }
 
+func (o *StepBDDOptions) ensureTestEnvironmentRepoSetup(requirements *config.RequirementsConfig, envName string) {
+	idx := -1
+	for i, env := range requirements.Environments {
+		if env.Key == envName {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		idx = len(requirements.Environments)
+		requirements.Environments = append(requirements.Environments, config.EnvironmentConfig{})
+	}
+	repo := requirements.Environments[idx]
+	repo.Key = envName
+	if repo.Owner == "" {
+		repo.Owner = o.Flags.GitOwner
+	}
+	if repo.Owner == "" {
+		repo.Owner = o.InstallOptions.GitRepositoryOptions.Username
+	}
+	if repo.Repository == "" {
+		repo.Repository = naming.ToValidName("environment-" + requirements.ClusterName + "-" + envName)
+	}
+	if repo.GitKind == "" {
+		repo.GitKind = o.InstallOptions.GitRepositoryOptions.ServerKind
+		if repo.GitKind == "" {
+			repo.GitKind = gits.KindGitHub
+		}
+	}
+	if repo.GitServer == "" {
+		repo.GitServer = o.InstallOptions.GitRepositoryOptions.ServerKind
+		if repo.GitServer == "" {
+			repo.GitServer = gits.GitHubURL
+		}
+	}
+	requirements.Environments[idx] = repo
+}
+
 func (o *StepBDDOptions) deleteCluster(cluster *bdd.CreateCluster) error {
+	projectID := ""
+	region := ""
+	for _, arg := range cluster.Args {
+		if strings.Contains(arg, "project-id=") {
+			projectID = strings.Split(arg, "=")[1]
+		}
+		if strings.Contains(arg, "z=") || strings.Contains(arg, "zone=") || strings.Contains(arg, "region=") {
+			region = strings.Split(arg, "=")[1]
+		}
+	}
+	if projectID != "" {
+		labelOptions := e2e.StepE2ELabelOptions{
+			ProjectID: projectID,
+			Delete:    true,
+			Region:    region,
+			StepOptions: opts.StepOptions{
+				CommonOptions: &opts.CommonOptions{},
+			},
+		}
+		labelOptions.Args = []string{cluster.Name}
+		return labelOptions.Run()
+	}
+	log.Logger().Warningf("Automated cluster cleanup is not supported for cluster %s", cluster.Name)
 	return nil
 }
 

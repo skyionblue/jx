@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	v1 "github.com/jenkins-x/jx/pkg/apis/jenkins.io/v1"
+	"github.com/jenkins-x/jx/pkg/apis/jenkins.io/v1"
 
 	"github.com/pkg/errors"
 
@@ -35,18 +35,22 @@ type InvokeDraftPack struct {
 }
 
 // InitBuildPacks initialise the build packs
-func (o *CommonOptions) InitBuildPacks() (string, *v1.TeamSettings, error) {
+func (o *CommonOptions) InitBuildPacks(i *InvokeDraftPack) (string, *v1.TeamSettings, error) {
 	settings, err := o.TeamSettings()
 	if err != nil {
 		return "", settings, err
 	}
-	dir, err := gitresolver.InitBuildPack(o.Git(), settings.BuildPackURL, settings.BuildPackRef)
+	buildPackURL := settings.BuildPackURL
+	if i != nil && i.ProjectConfig != nil && i.ProjectConfig.BuildPackGitURL != "" {
+		buildPackURL = i.ProjectConfig.BuildPackGitURL
+	}
+	dir, err := gitresolver.InitBuildPack(o.Git(), buildPackURL, settings.BuildPackRef)
 	return dir, settings, err
 }
 
 // InvokeDraftPack invokes a draft pack copying in a Jenkinsfile if required
 func (o *CommonOptions) InvokeDraftPack(i *InvokeDraftPack) (string, error) {
-	packsDir, settings, err := o.InitBuildPacks()
+	packsDir, settings, err := o.InitBuildPacks(i)
 	if err != nil {
 		return "", err
 	}
@@ -87,7 +91,7 @@ func (o *CommonOptions) InvokeDraftPack(i *InvokeDraftPack) (string, error) {
 	}
 
 	if len(customDraftPack) > 0 {
-		log.Logger().Info("trying to use draft pack: " + customDraftPack + "")
+		log.Logger().Infof("trying to use draft pack: %s", customDraftPack)
 		lpack = filepath.Join(packsDir, customDraftPack)
 		f, err := util.FileExists(lpack)
 		if err != nil {
@@ -185,7 +189,7 @@ func (o *CommonOptions) InvokeDraftPack(i *InvokeDraftPack) (string, error) {
 			}
 		}
 	}
-	log.Logger().Info("selected pack: " + lpack + "")
+	log.Logger().Infof("selected pack: %s", lpack)
 	draftPack := filepath.Base(lpack)
 	i.CustomDraftPack = draftPack
 

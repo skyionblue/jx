@@ -379,6 +379,11 @@ func (b *BitbucketCloudProvider) CreatePullRequest(
 	return newPR, nil
 }
 
+// UpdatePullRequest updates pull request number with data
+func (b *BitbucketCloudProvider) UpdatePullRequest(data *GitPullRequestArguments, number int) (*GitPullRequest, error) {
+	return nil, errors.Errorf("Not yet implemented for bitbucket")
+}
+
 func (b *BitbucketCloudProvider) UpdatePullRequestStatus(pr *GitPullRequest) error {
 
 	prID := int32(*pr.Number)
@@ -520,7 +525,7 @@ func (b *BitbucketCloudProvider) GetPullRequestCommits(owner string, repository 
 			if commit.Author.User != nil {
 				login = commit.Author.User.Username
 			}
-			// Author.Raw contains the Git commit author in the form: User <email@example.com>
+			// Author.MessageLines contains the Git commit author in the form: User <email@example.com>
 			email = rawEmailMatcher.ReplaceAllString(commit.Author.Raw, "$1")
 		}
 
@@ -958,7 +963,7 @@ func (b *BitbucketCloudProvider) UserAuth() auth.UserAuth {
 func (b *BitbucketCloudProvider) UserInfo(username string) *GitUser {
 	user, _, err := b.Client.UsersApi.UsersUsernameGet(b.Context, username)
 	if err != nil {
-		log.Logger().Error("Unable to fetch user info for " + username + " due to " + err.Error() + "")
+		log.Logger().Error("Unable to fetch user info for " + username + " due to " + err.Error())
 		return nil
 	}
 
@@ -980,6 +985,12 @@ func (b *BitbucketCloudProvider) ListReleases(org string, name string) ([]*GitRe
 	answer := []*GitRelease{}
 	log.Logger().Warn("Bitbucket Cloud doesn't support releases")
 	return answer, nil
+}
+
+// GetRelease is not supported on BitBucket Cloud
+func (b *BitbucketCloudProvider) GetRelease(org string, name string, tag string) (*GitRelease, error) {
+	log.Logger().Warn("Bitbucket Cloud doesn't support releases")
+	return nil, nil
 }
 
 func (b *BitbucketCloudProvider) AddCollaborator(user string, organisation string, repo string) error {
@@ -1025,4 +1036,9 @@ func (b *BitbucketCloudProvider) ListCommits(owner, repo string, opt *ListCommit
 // AddLabelsToIssue adds labels to issues or pullrequests
 func (b *BitbucketCloudProvider) AddLabelsToIssue(owner, repo string, number int, labels []string) error {
 	return fmt.Errorf("Getting content not supported on bitbucket")
+}
+
+// GetLatestRelease fetches the latest release from the git provider for org and name
+func (b *BitbucketCloudProvider) GetLatestRelease(org string, name string) (*GitRelease, error) {
+	return nil, nil
 }

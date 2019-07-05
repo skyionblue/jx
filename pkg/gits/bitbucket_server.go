@@ -416,6 +416,11 @@ func (b *BitbucketServerProvider) CreatePullRequest(data *GitPullRequestArgument
 	}, nil
 }
 
+// UpdatePullRequest updates pull request number with data
+func (b *BitbucketServerProvider) UpdatePullRequest(data *GitPullRequestArguments, number int) (*GitPullRequest, error) {
+	return nil, errors.Errorf("Not yet implemented for bitbucket")
+}
+
 func parseBitBucketServerURL(URL string) (string, string) {
 	var projectKey, repoName, subString string
 	var projectsIndex, reposIndex, repoEndIndex int
@@ -1006,7 +1011,7 @@ func (b *BitbucketServerProvider) UserInfo(username string) *GitUser {
 	var user bitbucket.UserWithLinks
 	apiResponse, err := b.Client.DefaultApi.GetUser(username)
 	if err != nil {
-		log.Logger().Error("Unable to fetch user info for " + username + " due to " + err.Error() + "")
+		log.Logger().Error("Unable to fetch user info for " + username + " due to " + err.Error())
 		return nil
 	}
 	err = mapstructure.Decode(apiResponse.Values, &user)
@@ -1028,6 +1033,12 @@ func (b *BitbucketServerProvider) ListReleases(org string, name string) ([]*GitR
 	answer := []*GitRelease{}
 	log.Logger().Warn("Bitbucket Server doesn't support releases")
 	return answer, nil
+}
+
+// GetRelease is unsupported on bitbucket as releases are not supported
+func (b *BitbucketServerProvider) GetRelease(org string, name string, tag string) (*GitRelease, error) {
+	log.Logger().Warn("Bitbucket Cloud doesn't support releases")
+	return nil, nil
 }
 
 func (b *BitbucketServerProvider) AddCollaborator(user string, organisation string, repo string) error {
@@ -1073,4 +1084,9 @@ func (b *BitbucketServerProvider) ListCommits(owner, repo string, opt *ListCommi
 // AddLabelsToIssue adds labels to issues or pullrequests
 func (b *BitbucketServerProvider) AddLabelsToIssue(owner, repo string, number int, labels []string) error {
 	return fmt.Errorf("Getting content not supported on bitbucket")
+}
+
+// GetLatestRelease fetches the latest release from the git provider for org and name
+func (b *BitbucketServerProvider) GetLatestRelease(org string, name string) (*GitRelease, error) {
+	return nil, nil
 }

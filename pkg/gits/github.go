@@ -233,6 +233,19 @@ func (p *GitHubProvider) ListReleases(org string, name string) ([]*GitRelease, e
 	return answer, nil
 }
 
+// GetRelease gets the release info for org, repo name and tag
+func (p *GitHubProvider) GetRelease(org string, name string, tag string) (*GitRelease, error) {
+	owner := org
+	if owner == "" {
+		owner = p.Username
+	}
+	repo, _, err := p.Client.Repositories.GetReleaseByTag(p.Context, owner, name, tag)
+	if err != nil {
+		return nil, err
+	}
+	return toGitHubRelease(owner, name, repo), nil
+}
+
 func toGitHubRelease(org string, name string, release *github.RepositoryRelease) *GitRelease {
 	totalDownloadCount := 0
 	assets := make([]GitReleaseAsset, 0)
@@ -532,6 +545,48 @@ func (p *GitHubProvider) CreatePullRequest(data *GitPullRequestArguments) (*GitP
 	}, nil
 }
 
+// UpdatePullRequest updates pull request with number using data
+func (p *GitHubProvider) UpdatePullRequest(data *GitPullRequestArguments, number int) (*GitPullRequest, error) {
+	owner := data.GitRepository.Organisation
+	repo := data.GitRepository.Name
+	title := data.Title
+	body := data.Body
+	head := data.Head
+	base := data.Base
+	config := &github.PullRequest{
+		Head: &github.PullRequestBranch{},
+		Base: &github.PullRequestBranch{},
+	}
+	if title != "" {
+		config.Title = github.String(title)
+	}
+	if body != "" {
+		config.Body = github.String(body)
+	}
+	if head != "" {
+		config.Head.Ref = github.String(head)
+	}
+	if base != "" {
+		config.Base.Ref = github.String(base)
+	}
+	pr, resp, err := p.Client.PullRequests.Edit(p.Context, owner, repo, number, config)
+	if err != nil {
+		if resp != nil && resp.Body != nil {
+			data, err2 := ioutil.ReadAll(resp.Body)
+			if err2 == nil && len(data) > 0 {
+				return nil, errors.Wrapf(err, "response: %s", string(data))
+			}
+		}
+		return nil, err
+	}
+	return &GitPullRequest{
+		URL:    notNullString(pr.HTMLURL),
+		Owner:  owner,
+		Repo:   repo,
+		Number: pr.Number,
+	}, nil
+}
+
 func (p *GitHubProvider) UpdatePullRequestStatus(pr *GitPullRequest) error {
 	if pr.Number == nil {
 		return fmt.Errorf("Missing Number for GitPullRequest %#v", pr)
@@ -719,7 +774,7 @@ func (p *GitHubProvider) GetPullRequestCommits(owner string, repository *GitRepo
 				}
 
 				if summary.Author.Email == "" {
-					log.Logger().Info("Commit author email is empty for: " + commit.GetSHA() + "")
+					log.Logger().Infof("Commit author email is empty for: %s", commit.GetSHA())
 					dir, err := os.Getwd()
 					if err != nil {
 						return answer, err
@@ -728,10 +783,10 @@ func (p *GitHubProvider) GetPullRequestCommits(owner string, repository *GitRepo
 					if err != nil {
 						return answer, err
 					}
-					log.Logger().Info("Looking for commits in: " + gitDir + "")
+					log.Logger().Infof("Looking for commits in: %s", gitDir)
 					email, err := p.Git.GetAuthorEmailForCommit(gitDir, commit.GetSHA())
 					if err != nil {
-						log.Logger().Warn("Commit not found: " + commit.GetSHA() + "")
+						log.Logger().Warnf("Commit not found: %s", commit.GetSHA())
 						continue
 					}
 					summary.Author.Email = email
@@ -739,10 +794,10 @@ func (p *GitHubProvider) GetPullRequestCommits(owner string, repository *GitRepo
 
 				answer = append(answer, summary)
 			} else {
-				log.Logger().Warn("No author for commit: " + commit.GetSHA() + "")
+				log.Logger().Warnf("No author for commit: %s", commit.GetSHA())
 			}
 		} else {
-			log.Logger().Warn("No Commit object for for commit: " + commit.GetSHA() + "")
+			log.Logger().Warnf("No Commit object for for commit: %s", commit.GetSHA())
 		}
 	}
 	return answer, nil
@@ -1199,7 +1254,7 @@ func (p *GitHubProvider) UserAuth() auth.UserAuth {
 func (p *GitHubProvider) UserInfo(username string) *GitUser {
 	user, _, err := p.Client.Users.Get(p.Context, username)
 	if user == nil || err != nil {
-		log.Logger().Error("Unable to fetch user info for " + username + "")
+		log.Logger().Errorf("Unable to fetch user info for %s", username)
 		return nil
 	}
 
@@ -1301,4 +1356,13 @@ func (p *GitHubProvider) ListCommits(owner, repo string, opt *ListCommitsArgumen
 		}
 	}
 	return commits, nil
+}
+
+// GetLatestRelease fetches the latest release from the git provider for org and name
+func (p *GitHubProvider) GetLatestRelease(org string, name string) (*GitRelease, error) {
+	repoRelease, _, err := p.Client.Repositories.GetLatestRelease(p.Context, org, name)
+	if err != nil {
+		return nil, errors.Wrapf(err, "getting latest release for %s/%s", org, name)
+	}
+	return toGitHubRelease(org, name, repoRelease), nil
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jenkins-x/jx/pkg/cmd/helper"
+	"github.com/jenkins-x/jx/pkg/kube/naming"
 
 	"github.com/jenkins-x/jx/pkg/client/clientset/versioned"
 	"github.com/jenkins-x/jx/pkg/environments"
@@ -145,13 +146,9 @@ func (o *DeleteApplicationOptions) deleteProwApplication(repoService jenkinsv1.S
 		return deletedApplications, err
 	}
 	envMap, _, err := kube.GetOrderedEnvironments(jxClient, "")
-	currentUser, err := user.Current()
+	username, err := o.GetUsername(o.Username)
 	if err != nil {
 		log.Logger().Warnf("could not get the current user: %s", err.Error())
-	}
-	username := "unknown"
-	if currentUser != nil {
-		username = currentUser.Username
 	}
 
 	kubeClient, ns, err := o.KubeClientAndDevNamespace()
@@ -235,7 +232,7 @@ func (o *DeleteApplicationOptions) deleteProwApplication(repoService jenkinsv1.S
 		}
 		deletedApplications = append(deletedApplications, applicationName)
 
-		srName := kube.ToValidName(org + "-" + applicationName)
+		srName := naming.ToValidName(org + "-" + applicationName)
 		err := repoService.Delete(srName, nil)
 		if err != nil {
 			log.Logger().Warnf("Unable to find application metadata for %s to remove", applicationName)
@@ -276,7 +273,7 @@ func (o *DeleteApplicationOptions) deleteJenkinsApplication() (deletedApplicatio
 
 	for _, j := range jobs {
 		if jenkins.IsMultiBranchProject(j) {
-			name := j.FullName
+			name := j.Name
 			names = append(names, name)
 			m[name] = j
 		}

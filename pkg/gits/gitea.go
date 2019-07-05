@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	errors2 "github.com/pkg/errors"
+
 	"code.gitea.io/sdk/gitea"
 	"github.com/google/go-github/github"
 	"github.com/jenkins-x/jx/pkg/auth"
@@ -92,6 +94,20 @@ func (p *GiteaProvider) ListReleases(org string, name string) ([]*GitRelease, er
 		answer = append(answer, toGiteaRelease(org, name, repo))
 	}
 	return answer, nil
+}
+
+// GetRelease returns the release info for org, repo name and tag
+func (p *GiteaProvider) GetRelease(org string, name string, tag string) (*GitRelease, error) {
+	releases, err := p.ListReleases(org, name)
+	if err != nil {
+		return nil, errors2.WithStack(err)
+	}
+	for _, release := range releases {
+		if release.TagName == tag {
+			return release, nil
+		}
+	}
+	return nil, nil
 }
 
 func toGiteaRelease(org string, name string, release *gitea.Release) *GitRelease {
@@ -284,6 +300,11 @@ func (p *GiteaProvider) CreatePullRequest(data *GitPullRequestArguments) (*GitPu
 		answer.LastCommitSha = pr.Head.Sha
 	}
 	return answer, nil
+}
+
+// UpdatePullRequest updates pull request with number using data
+func (p *GiteaProvider) UpdatePullRequest(data *GitPullRequestArguments, number int) (*GitPullRequest, error) {
+	return nil, errors2.Errorf("Not yet implemented for gitea")
 }
 
 func (p *GiteaProvider) UpdatePullRequestStatus(pr *GitPullRequest) error {
@@ -743,4 +764,13 @@ func (p *GiteaProvider) ListCommits(owner, repo string, opt *ListCommitsArgument
 // AddLabelsToIssue adds labels to issues or pullrequests
 func (p *GiteaProvider) AddLabelsToIssue(owner, repo string, number int, labels []string) error {
 	return fmt.Errorf("Getting content not supported on gitea")
+}
+
+// GetLatestRelease fetches the latest release from the git provider for org and name
+func (p *GiteaProvider) GetLatestRelease(org string, name string) (*GitRelease, error) {
+	releases, err := p.Client.ListReleases(org, name)
+	if err != nil {
+		return nil, errors2.Wrapf(err, "getting releases for %s/%s", org, name)
+	}
+	return toGiteaRelease(org, name, releases[0]), nil
 }

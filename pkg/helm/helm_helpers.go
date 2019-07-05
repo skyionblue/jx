@@ -20,17 +20,16 @@ import (
 
 	"github.com/pborman/uuid"
 
+	"github.com/jenkins-x/jx/pkg/kube"
+	"github.com/jenkins-x/jx/pkg/log"
+	"github.com/jenkins-x/jx/pkg/secreturl"
 	"github.com/jenkins-x/jx/pkg/table"
-	"github.com/jenkins-x/jx/pkg/vault"
-
+	"github.com/jenkins-x/jx/pkg/util"
 	"github.com/jenkins-x/jx/pkg/version"
 
-	"github.com/jenkins-x/jx/pkg/kube"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/ghodss/yaml"
-	"github.com/jenkins-x/jx/pkg/log"
-	"github.com/jenkins-x/jx/pkg/util"
 	"github.com/pkg/errors"
 	"k8s.io/helm/pkg/chartutil"
 	"k8s.io/helm/pkg/proto/hapi/chart"
@@ -45,8 +44,14 @@ const (
 	SecretsFileName = "secrets.yaml"
 	// ValuesFileName the file name for values
 	ValuesFileName = "values.yaml"
+	// ValuesTemplateFileName a templated values.yaml file which can refer to parameter expressions
+	ValuesTemplateFileName = "values.tmpl.yaml"
 	// TemplatesDirName is the default name for the templates directory
 	TemplatesDirName = "templates"
+
+	// ParametersYAMLFile contains logical parameters (values or secrets) which can be fetched from a Secret URL or
+	// inlined if not a secret which can be referenced from a 'values.yaml` file via a `{{ .Parameters.foo.bar }}` expression
+	ParametersYAMLFile = "parameters.yaml"
 
 	// InClusterHelmRepositoryURL is the default cluster local helm repo
 	InClusterHelmRepositoryURL = "http://jenkins-x-chartmuseum:8080"
@@ -308,8 +313,10 @@ func LoadChart(data []byte) (*chart.Metadata, error) {
 
 // LoadValues loads the values from some data
 func LoadValues(data []byte) (map[string]interface{}, error) {
-	r := make(map[string]interface{})
-
+	r := map[string]interface{}{}
+	if data == nil || len(data) == 0 {
+		return r, nil
+	}
 	return r, yaml.Unmarshal(data, &r)
 }
 
@@ -446,13 +453,25 @@ func CombineValueFilesToFile(outFile string, inputFiles []string, chartName stri
 	return nil
 }
 
+// IsLocal returns whether this chart is being installed from the local filesystem or not
+func IsLocal(chart string) bool {
+	b := strings.HasPrefix(chart, "/") || strings.HasPrefix(chart, ".") || strings.Count(chart, "/") > 1
+	if !b {
+		// check if file exists, then it's local
+		exists, err := util.FileExists(chart)
+		if err == nil {
+			return exists
+		}
+	}
+	return b
+}
+
 // InspectChart fetches the specified chart in a repo using helmer, and then calls the closure on it, before cleaning up
 func InspectChart(chart string, version string, repo string, username string, password string,
 	helmer Helmer, inspector func(dir string) error) error {
-	isLocal := false
+	isLocal := IsLocal(chart)
 	dirPrefix := fmt.Sprintf("jx-helm-fetch-%s-", chart)
-	if strings.HasPrefix(chart, "/") || strings.HasPrefix(chart, ".") || strings.Count(chart, "/") > 1 {
-		isLocal = true
+	if isLocal {
 		dirPrefix = "jx-helm-fetch"
 	}
 
@@ -470,11 +489,7 @@ func InspectChart(chart string, version string, repo string, username string, pa
 		if err != nil {
 			return errors.Wrapf(err, "copying %s to %s", chart, dir)
 		}
-		// We need to manually build the dependencies
-		err = helmer.BuildDependency()
-		if err != nil {
-			return errors.Wrapf(err, "building dependencies for %s", chart)
-		}
+		helmer.SetCWD(dir)
 		inspectPath = dir
 	} else {
 		err = helmer.FetchChart(chart, version, true, dir, repo, username, password)
@@ -508,9 +523,9 @@ type InstallChartOptions struct {
 
 // InstallFromChartOptions uses the helmer and kubeClient interfaces to install the chart from the options,
 // respecting the installTimeout, looking up or updating Vault with the username and password for the repo.
-// If vaultClient is nil then username and passwords for repos will not be looked up in Vault.
+// If secretURLClient is nil then username and passwords for repos will not be looked up in Vault.
 func InstallFromChartOptions(options InstallChartOptions, helmer Helmer, kubeClient kubernetes.Interface,
-	installTimeout string, vaultClient vault.Client) error {
+	installTimeout string, secretURLClient secreturl.Client) error {
 	chart := options.Chart
 	if options.Version == "" {
 		versionsDir := options.VersionsDir
@@ -524,14 +539,14 @@ func InstallFromChartOptions(options InstallChartOptions, helmer Helmer, kubeCli
 		}
 	}
 	if options.HelmUpdate {
-		log.Logger().Info("Updating Helm repository...")
+		log.Logger().Debugf("Updating Helm repository...")
 		err := helmer.UpdateRepo()
 		if err != nil {
 			return errors.Wrap(err, "failed to update repository")
 		}
-		log.Logger().Info("Helm repository update done.")
+		log.Logger().Debugf("Helm repository update done.")
 	}
-	cleanup, err := DecorateWithSecrets(&options, vaultClient)
+	cleanup, err := DecorateWithSecrets(&options, secretURLClient)
 	defer cleanup()
 	if err != nil {
 		return errors.WithStack(err)
@@ -566,10 +581,10 @@ type HelmRepoCredential struct {
 
 // DecorateWithSecrets will replace any vault: URIs with the secret from vault. Safe to call with a nil client (
 // no replacement will take place).
-func DecorateWithSecrets(options *InstallChartOptions, vaultClient vault.Client) (func(), error) {
+func DecorateWithSecrets(options *InstallChartOptions, secretURLClient secreturl.Client) (func(), error) {
 	cleanup := func() {
 	}
-	if vaultClient != nil {
+	if secretURLClient != nil {
 		newValuesFiles := make([]string, 0)
 		cleanup = func() {
 			for _, f := range newValuesFiles {
@@ -588,9 +603,12 @@ func DecorateWithSecrets(options *InstallChartOptions, vaultClient vault.Client)
 			if err != nil {
 				return cleanup, errors.Wrapf(err, "reading file %s", valueFile)
 			}
-			newValues, err := vault.ReplaceURIs(string(bytes), vaultClient)
-			if err != nil {
-				return cleanup, errors.Wrapf(err, "replacing vault URIs")
+			newValues := string(bytes)
+			if secretURLClient != nil {
+				newValues, err = secretURLClient.ReplaceURIs(newValues)
+				if err != nil {
+					return cleanup, errors.Wrapf(err, "replacing vault URIs")
+				}
 			}
 			err = ioutil.WriteFile(newValuesFile.Name(), []byte(newValues), 0600)
 			if err != nil {
@@ -603,12 +621,41 @@ func DecorateWithSecrets(options *InstallChartOptions, vaultClient vault.Client)
 	return cleanup, nil
 }
 
+// LoadParameters loads the 'parameters.yaml' file if it exists in the current directory
+func LoadParameters(dir string, secretURLClient secreturl.Client) (chartutil.Values, error) {
+	fileName := filepath.Join(dir, ParametersYAMLFile)
+	exists, err := util.FileExists(fileName)
+	if err != nil {
+		return nil, errors.Wrapf(err, "checking %s exists", fileName)
+	}
+	m := map[string]interface{}{}
+	if exists {
+		data, err := ioutil.ReadFile(fileName)
+		if err != nil {
+			return nil, errors.Wrapf(err, "reading %s", fileName)
+		}
+		if secretURLClient != nil {
+			text, err := secretURLClient.ReplaceURIs(string(data))
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to convert secret URLs in parameters file %s", fileName)
+			}
+			data = []byte(text)
+		}
+
+		m, err = LoadValues(data)
+		if err != nil {
+			return nil, errors.Wrapf(err, "unmarshaling %s", fileName)
+		}
+	}
+	return chartutil.Values(m), err
+}
+
 // AddHelmRepoIfMissing will add the helm repo if there is no helm repo with that url present.
 // It will generate the repoName from the url (using the host name) if the repoName is empty.
 // The repo name may have a suffix added in order to prevent name collisions, and is returned for this reason.
 // The username and password will be stored in vault for the URL (if vault is enabled).
 func AddHelmRepoIfMissing(helmURL, repoName, username, password string, helmer Helmer,
-	vaultClient vault.Client, in terminal.FileReader,
+	secretURLClient secreturl.Client, in terminal.FileReader,
 	out terminal.FileWriter, outErr io.Writer) (string, error) {
 	missing, existingName, err := helmer.IsRepoMissing(helmURL)
 	if err != nil {
@@ -639,7 +686,7 @@ func AddHelmRepoIfMissing(helmURL, repoName, username, password string, helmer H
 			}
 		}
 		log.Logger().Infof("Adding missing Helm repo: %s %s", util.ColorInfo(repoName), util.ColorInfo(helmURL))
-		username, password, err = DecorateWithCredentials(helmURL, username, password, vaultClient, in, out, outErr)
+		username, password, err = DecorateWithCredentials(helmURL, username, password, secretURLClient, in, out, outErr)
 		if err != nil {
 			return "", errors.WithStack(err)
 		}
@@ -655,12 +702,12 @@ func AddHelmRepoIfMissing(helmURL, repoName, username, password string, helmer H
 }
 
 // DecorateWithCredentials will, if vault is installed, store or replace the username or password
-func DecorateWithCredentials(repo string, username string, password string, vaultClient vault.Client, in terminal.FileReader,
+func DecorateWithCredentials(repo string, username string, password string, secretURLClient secreturl.Client, in terminal.FileReader,
 	out terminal.FileWriter, outErr io.Writer) (string,
 	string, error) {
-	if repo != "" && vaultClient != nil {
+	if repo != "" && secretURLClient != nil {
 		creds := HelmRepoCredentials{}
-		if err := vaultClient.ReadObject(RepoVaultPath, &creds); err != nil {
+		if err := secretURLClient.ReadObject(RepoVaultPath, &creds); err != nil {
 			return "", "", errors.Wrapf(err, "reading repo credentials from vault %s", RepoVaultPath)
 		}
 		var existingCred, cred HelmRepoCredential
@@ -684,7 +731,7 @@ func DecorateWithCredentials(repo string, username string, password string, vaul
 		if cred.Password != existingCred.Password || cred.Username != existingCred.Username {
 			log.Logger().Infof("Storing credentials for %s in vault %s", repo, RepoVaultPath)
 			creds[repo] = cred
-			_, err := vaultClient.WriteObject(RepoVaultPath, creds)
+			_, err := secretURLClient.WriteObject(RepoVaultPath, creds)
 			if err != nil {
 				return "", "", errors.Wrapf(err, "updating repo credentials in vault %s", RepoVaultPath)
 			}
@@ -845,4 +892,36 @@ func RenderReleasesAsTable(releases map[string]ReleaseSummary, sortedKeys []stri
 	t.Render()
 	writer.Flush()
 	return buffer.String(), nil
+}
+
+// UpdateRequirementsToNewVersion update dependencies with name to newVersion, returning the oldVersions
+func UpdateRequirementsToNewVersion(requirements *Requirements, name string, newVersion string) []string {
+	answer := make([]string, 0)
+	for _, dependency := range requirements.Dependencies {
+		if dependency.Name == name {
+			answer = append(answer, dependency.Version)
+			dependency.Version = newVersion
+		}
+	}
+	return answer
+}
+
+// UpdateImagesInValuesToNewVersion update a (values) file, replacing that start with "Image: <name>:" to "Image: <name>:<newVersion>",
+// returning the oldVersions
+func UpdateImagesInValuesToNewVersion(data []byte, name string, newVersion string) ([]byte, []string) {
+	oldVersions := make([]string, 0)
+	var answer strings.Builder
+	linePrefix := fmt.Sprintf("Image: %s:", name)
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmedLine := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmedLine, linePrefix) {
+			oldVersions = append(oldVersions, strings.TrimPrefix(trimmedLine, linePrefix))
+			answer.WriteString(linePrefix)
+			answer.WriteString(newVersion)
+		} else {
+			answer.WriteString(line)
+		}
+		answer.WriteString("\n")
+	}
+	return []byte(answer.String()), oldVersions
 }

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	errors2 "github.com/pkg/errors"
+
 	"github.com/google/go-github/github"
 	"github.com/jenkins-x/jx/pkg/auth"
 	"github.com/jenkins-x/jx/pkg/log"
@@ -70,6 +72,11 @@ func (g *GitlabProvider) ListReleases(org string, name string) ([]*GitRelease, e
 	answer := []*GitRelease{}
 	// TODO
 	return answer, nil
+}
+
+// GetRelease returns the release info for the org, repo name and tag
+func (g *GitlabProvider) GetRelease(org string, name string, tag string) (*GitRelease, error) {
+	return nil, nil
 }
 
 func getRepositories(g *gitlab.Client, username string, org string, searchFilter string) ([]*gitlab.Project, *gitlab.Response, error) {
@@ -267,6 +274,11 @@ func (g *GitlabProvider) CreatePullRequest(data *GitPullRequestArguments) (*GitP
 	}
 
 	return fromMergeRequest(mr, owner, repo), nil
+}
+
+// UpdatePullRequest updates pull request with number using data
+func (g *GitlabProvider) UpdatePullRequest(data *GitPullRequestArguments, number int) (*GitPullRequest, error) {
+	return nil, errors2.Errorf("Not yet implemented for gitlab")
 }
 
 func fromMergeRequest(mr *gitlab.MergeRequest, owner, repo string) *GitPullRequest {
@@ -724,4 +736,10 @@ func (g *GitlabProvider) ListCommits(owner, repo string, opt *ListCommitsArgumen
 // AddLabelsToIssue adds labels to issues or pullrequests
 func (g *GitlabProvider) AddLabelsToIssue(owner, repo string, number int, labels []string) error {
 	return fmt.Errorf("Getting content not supported on gitlab yet")
+}
+
+// GetLatestRelease fetches the latest release from the git provider for org and name
+func (g *GitlabProvider) GetLatestRelease(org string, name string) (*GitRelease, error) {
+	// TODO
+	return nil, nil
 }

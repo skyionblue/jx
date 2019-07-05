@@ -6,17 +6,20 @@ const (
 	// ClassificationLogs stores build logs
 	ClassificationLogs = "logs"
 
-	// ClassificationTest stores test results/rports
+	// ClassificationTests stores test results/reports
 	ClassificationTests = "tests"
 
 	// ClassificationCoverage stores code coverage results/reports
 	ClassificationCoverage = "coverage"
+
+	// ClassificationReports stores test results, coverage & quality reports
+	ClassificationReports = "reports"
 )
 
 var (
 	// Classifications the common classification names
 	Classifications = []string{
-		ClassificationCoverage, ClassificationTests, ClassificationLogs,
+		ClassificationCoverage, ClassificationTests, ClassificationLogs, ClassificationReports,
 	}
 
 	// ClassificationValues the classification values as a string

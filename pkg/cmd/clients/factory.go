@@ -227,13 +227,9 @@ func (f *factory) CreateJenkinsAuthConfigService(c kubernetes.Interface, ns stri
 			}
 		}
 
-		svc, err := c.CoreV1().Services(ns).Get(jenkinsServiceName, metav1.GetOptions{})
-		if err != nil {
-			return authConfigSvc, err
-		}
-		svcURL := services.GetServiceURL(svc)
+		svcURL, err := services.FindServiceURL(c, ns, jenkinsServiceName)
 		if svcURL == "" {
-			return authConfigSvc, fmt.Errorf("unable to find external URL annotation on service %s in namespace %s", svc.Name, ns)
+			return authConfigSvc, fmt.Errorf("unable to find external URL of service %s in namespace %s", jenkinsServiceName, ns)
 		}
 
 		u, err := url.Parse(svcURL)
@@ -322,6 +318,7 @@ func (f *factory) CreateAddonAuthConfigService(namespace string, secrets *corev1
 }
 
 func (f *factory) AuthMergePipelineSecrets(config *auth.AuthConfig, secrets *corev1.SecretList, kind string, isCDPipeline bool) error {
+	log.Logger().Debug("merging pipeline secrets with local secrets")
 	if config == nil || secrets == nil {
 		return nil
 	}
@@ -764,7 +761,7 @@ func (f *factory) CreateHelm(verbose bool,
 		featureFlag = "no-tiller-server"
 	}
 	if verbose {
-		log.Logger().Infof("Using helmBinary %s with feature flag: %s", util.ColorInfo(helmBinary), util.ColorInfo(featureFlag))
+		log.Logger().Debugf("Using helmBinary %s with feature flag: %s", util.ColorInfo(helmBinary), util.ColorInfo(featureFlag))
 	}
 	helmCLI := helm.NewHelmCLI(helmBinary, helm.V2, "", verbose)
 	var h helm.Helmer = helmCLI

@@ -1,6 +1,7 @@
 package gits
 
 import (
+	"fmt"
 	"io"
 	"time"
 
@@ -41,6 +42,7 @@ type GitProvider interface {
 	ValidateRepositoryName(org string, name string) error
 
 	CreatePullRequest(data *GitPullRequestArguments) (*GitPullRequest, error)
+	UpdatePullRequest(data *GitPullRequestArguments, number int) (*GitPullRequest, error)
 
 	UpdatePullRequestStatus(pr *GitPullRequest) error
 
@@ -99,6 +101,10 @@ type GitProvider interface {
 	UpdateRelease(owner string, repo string, tag string, releaseInfo *GitRelease) error
 
 	ListReleases(org string, name string) ([]*GitRelease, error)
+
+	GetRelease(org string, name string, id string) (*GitRelease, error)
+
+	GetLatestRelease(org string, name string) (*GitRelease, error)
 
 	GetContent(org string, name string, path string, ref string) (*GitFileContent, error)
 
@@ -215,7 +221,9 @@ type Gitter interface {
 	FetchBranchShallow(dir string, repo string, refspec ...string) error
 	FetchBranchUnshallow(dir string, repo string, refspec ...string) error
 	Merge(dir string, commitish string) error
+	MergeTheirs(dir string, commitish string) error
 	ResetHard(dir string, commitish string) error
+	RebaseTheirs(dir string, upstream string, branch string) error
 
 	Stash(dir string) error
 
@@ -233,12 +241,14 @@ type Gitter interface {
 	LoadFileFromBranch(dir string, branch string, file string) (string, error)
 
 	GetLatestCommitMessage(dir string) (string, error)
-	GetPreviousGitTagSHA(dir string) (string, error)
-	GetCurrentGitTagSHA(dir string) (string, error)
+	GetPreviousGitTagSHA(dir string) (string, string, error)
+	GetCurrentGitTagSHA(dir string) (string, string, error)
 	FetchTags(dir string) error
 	Tags(dir string) ([]string, error)
 	CreateTag(dir string, tag string, msg string) error
 	GetLatestCommitSha(dir string) (string, error)
+	GetCommits(dir string, startSha string, endSha string) ([]GitCommit, error)
+	RevParse(dir string, rev string) (string, error)
 
 	GetRevisionBeforeDate(dir string, t time.Time) (string, error)
 	GetRevisionBeforeDateText(dir string, dateText string) (string, error)
@@ -253,4 +263,8 @@ type PullRequestDetails struct {
 	Message    string
 	BranchName string
 	Title      string
+}
+
+func (p *PullRequestDetails) String() string {
+	return fmt.Sprintf("Branch Name: %s; Title: %s; Message: %s", p.BranchName, p.Title, p.Message)
 }

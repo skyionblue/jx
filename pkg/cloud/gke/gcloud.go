@@ -13,6 +13,7 @@ import (
 	"github.com/jenkins-x/jx/pkg/log"
 	"github.com/jenkins-x/jx/pkg/util"
 	"github.com/pkg/errors"
+	osUser "os/user"
 	"sigs.k8s.io/yaml"
 )
 
@@ -21,13 +22,7 @@ const KmsLocation = "global"
 
 var (
 	// RequiredServiceAccountRoles the roles required to create a cluster with terraform
-	RequiredServiceAccountRoles = []string{"roles/compute.instanceAdmin.v1",
-		"roles/iam.serviceAccountActor",
-		"roles/container.clusterAdmin",
-		"roles/container.admin",
-		"roles/container.developer",
-		"roles/storage.objectAdmin",
-		"roles/editor"}
+	RequiredServiceAccountRoles = []string{"roles/owner"}
 
 	// KanikoServiceAccountRoles the roles required to run kaniko with GCS
 	KanikoServiceAccountRoles = []string{"roles/storage.admin",
@@ -117,6 +112,21 @@ func CreateManagedZone(projectID string, domain string) error {
 		log.Logger().Infof("Managed Zone exists for %s domain.", domain)
 	}
 	return nil
+}
+
+// CreateDNSZone creates the tenants DNS zone if it doesn't exist
+// and returns the list of name servers for the given domain and project
+func CreateDNSZone(projectID string, domain string) (string, []string, error) {
+	var managedZone, nameServers = "", []string{}
+	err := CreateManagedZone(projectID, domain)
+	if err != nil {
+		return "", []string{}, errors.Wrap(err, "while trying to creating a CloudDNS managed zone")
+	}
+	managedZone, nameServers, err = GetManagedZoneNameServers(projectID, domain)
+	if err != nil {
+		return "", []string{}, errors.Wrap(err, "while trying to retrieve the managed zone name servers")
+	}
+	return managedZone, nameServers, nil
 }
 
 // GetManagedZoneNameServers retrieves a list of name servers associated with a zone
@@ -261,6 +271,26 @@ func CreateBucket(projectID string, bucketName string, location string) error {
 		return err
 	}
 	return nil
+}
+
+//AddBucketLabel adds a label to a Google Storage bucket
+func AddBucketLabel(bucketName string, label string) {
+	found := FindBucket(bucketName)
+	if found && label != "" {
+		fullBucketName := fmt.Sprintf("gs://%s", bucketName)
+		args := []string{"label", "ch", "-l", label}
+
+		args = append(args, fullBucketName)
+
+		cmd := util.Command{
+			Name: "gsutil",
+			Args: args,
+		}
+		output, err := cmd.RunWithoutRetry()
+		if err != nil {
+			log.Logger().Infof("Error adding bucket label: %s, %s", output, err)
+		}
+	}
 }
 
 // FindBucket finds a Google Storage bucket
@@ -640,7 +670,7 @@ func EnableAPIs(projectID string, apis ...string) error {
 	}
 
 	if len(toEnableArray) == 0 {
-		log.Logger().Infof("No apis need to be enable as they are already enabled: %s", util.ColorInfo(strings.Join(apis, " ")))
+		log.Logger().Debugf("No apis need to be enable as they are already enabled: %s", util.ColorInfo(strings.Join(apis, " ")))
 		return nil
 	}
 
@@ -652,7 +682,7 @@ func EnableAPIs(projectID string, apis ...string) error {
 		args = append(args, projectID)
 	}
 
-	log.Logger().Infof("Lets ensure we have %s enabled on your project via: %s", toEnableArray, util.ColorInfo("gcloud "+strings.Join(args, " ")))
+	log.Logger().Debugf("Lets ensure we have %s enabled on your project via: %s", toEnableArray, util.ColorInfo("gcloud "+strings.Join(args, " ")))
 
 	cmd := util.Command{
 		Name: "gcloud",
@@ -894,4 +924,14 @@ func IsGCSWriteRoleEnabled(cluster string, zone string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// UserLabel returns a string identifying current user that can be used as a label
+func UserLabel() string {
+	user, err := osUser.Current()
+	if err == nil && user != nil && user.Username != "" {
+		userLabel := util.SanitizeLabel(user.Username)
+		return fmt.Sprintf("created-by:%s", userLabel)
+	}
+	return ""
 }

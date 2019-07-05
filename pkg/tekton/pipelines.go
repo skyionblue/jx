@@ -7,7 +7,9 @@ import (
 	"time"
 
 	jenkinsio "github.com/jenkins-x/jx/pkg/apis/jenkins.io"
+	"github.com/jenkins-x/jx/pkg/kube/naming"
 	"github.com/jenkins-x/jx/pkg/prow"
+	"k8s.io/apimachinery/pkg/util/rand"
 
 	"github.com/jenkins-x/jx/pkg/client/clientset/versioned"
 	jxClient "github.com/jenkins-x/jx/pkg/client/clientset/versioned"
@@ -23,9 +25,26 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// PipelineType is used to differentiate between actual build pipelines and pipelines to create the build pipelines,
+// aka meta pipelines.
+type PipelineType int
+
+const (
+	// BuildPipeline is the yype for the actual build pipeline
+	BuildPipeline PipelineType = iota
+
+	// MetaPipeline type for the meta pipeline used to generate the build pipeline
+	MetaPipeline
+)
+
+func (s PipelineType) String() string {
+	return [...]string{"build", "meta"}[s]
+}
+
 // GeneratePipelineActivity generates a initial PipelineActivity CRD so UI/get act can get an earlier notification that the jobs have been scheduled
-func GeneratePipelineActivity(buildNumber string, branch string, gitInfo *gits.GitRepository, pr *prow.PullRefs) *kube.PromoteStepActivityKey {
+func GeneratePipelineActivity(buildNumber string, branch string, gitInfo *gits.GitRepository, pr *prow.PullRefs, pipelineType PipelineType) *kube.PromoteStepActivityKey {
 	name := gitInfo.Organisation + "-" + gitInfo.Name + "-" + branch + "-" + buildNumber
+
 	pipeline := gitInfo.Organisation + "/" + gitInfo.Name + "/" + branch
 	log.Logger().Infof("PipelineActivity for %s", name)
 	key := &kube.PromoteStepActivityKey{
@@ -98,11 +117,11 @@ func CreateOrUpdateTask(tektonClient tektonclient.Interface, ns string, created 
 }
 
 // GenerateNextBuildNumber generates a new build number for the given project.
-func GenerateNextBuildNumber(tektonClient tektonclient.Interface, jxClient jxClient.Interface, ns string, gitInfo *gits.GitRepository, branch string, duration time.Duration, pipelineIdentifier string) (string, error) {
+func GenerateNextBuildNumber(tektonClient tektonclient.Interface, jxClient jxClient.Interface, ns string, gitInfo *gits.GitRepository, branch string, duration time.Duration, context string) (string, error) {
 	nextBuildNumber := ""
 	resourceInterface := jxClient.JenkinsV1().SourceRepositories(ns)
 	// TODO: How does SourceRepository handle name overlap?
-	sourceRepoName := kube.ToValidName(gitInfo.Organisation + "-" + gitInfo.Name)
+	sourceRepoName := naming.ToValidName(gitInfo.Organisation + "-" + gitInfo.Name)
 
 	f := func() error {
 		sourceRepo, err := kube.GetOrCreateSourceRepository(jxClient, ns, gitInfo.Name, gitInfo.Organisation, gitInfo.ProviderURL())
@@ -113,7 +132,7 @@ func GenerateNextBuildNumber(tektonClient tektonclient.Interface, jxClient jxCli
 		if sourceRepo.Annotations == nil {
 			sourceRepo.Annotations = make(map[string]string, 1)
 		}
-		annKey := LastBuildNumberAnnotationPrefix + kube.ToValidName(branch)
+		annKey := LastBuildNumberAnnotationPrefix + naming.ToValidName(branch)
 		annVal := sourceRepo.Annotations[annKey]
 		lastBuildNumber := 0
 		if annVal != "" {
@@ -125,9 +144,16 @@ func GenerateNextBuildNumber(tektonClient tektonclient.Interface, jxClient jxCli
 		for nextNumber := lastBuildNumber + 1; true; nextNumber++ {
 			// lets check there is not already a PipelineRun for this number
 			buildIdentifier := strconv.Itoa(nextNumber)
-			pipelineResourceName := syntax.PipelineRunName(pipelineIdentifier, buildIdentifier)
-			_, err := tektonClient.TektonV1alpha1().PipelineRuns(ns).Get(pipelineResourceName, metav1.GetOptions{})
-			if err == nil {
+
+			labelSelector := fmt.Sprintf("owner=%s,repo=%s,branch=%s,build=%s", gitInfo.Organisation, gitInfo.Name, branch, buildIdentifier)
+			if context != "" {
+				labelSelector += fmt.Sprintf(",context=%s", context)
+			}
+
+			prs, err := tektonClient.TektonV1alpha1().PipelineRuns(ns).List(metav1.ListOptions{
+				LabelSelector: labelSelector,
+			})
+			if err == nil && len(prs.Items) > 0 {
 				// lets try make another build number as there's already a PipelineRun
 				// which could be due to name clashes
 				continue
@@ -272,20 +298,29 @@ func CreateOrUpdatePipeline(tektonClient tektonclient.Interface, ns string, crea
 	return answer, nil
 }
 
-// PipelineResourceName returns the pipeline resource name for the given git repository, branch and context
-func PipelineResourceName(gitInfo *gits.GitRepository, branch string, context string) string {
-	organisation := gitInfo.Organisation
-	name := gitInfo.Name
+// PipelineResourceNameFromGitInfo returns the pipeline resource name for the given git repository, branch and context
+func PipelineResourceNameFromGitInfo(gitInfo *gits.GitRepository, branch string, context string, pipelineType PipelineType, tektonClient tektonclient.Interface, ns string) string {
+	return PipelineResourceName(gitInfo.Organisation, gitInfo.Name, branch, context, pipelineType, tektonClient, ns)
+}
+
+// PipelineResourceName returns the pipeline resource name for the given git org, repo name, branch and context
+func PipelineResourceName(organisation string, name string, branch string, context string, pipelineType PipelineType, tektonClient tektonclient.Interface, ns string) string {
 	dirtyName := organisation + "-" + name + "-" + branch
 	if context != "" {
 		dirtyName += "-" + context
 	}
-	// TODO: https://github.com/tektoncd/pipeline/issues/481 causes
-	// problems since autogenerated container names can end up surpassing 63
-	// characters, which is not allowed. Longest known prefix for now is 28
-	// chars (build-step-artifact-copy-to-), so we truncate to 35 so the
-	// generated container names are no more than 63 chars.
-	resourceName := kube.ToValidNameTruncated(dirtyName, 31)
+
+	if pipelineType == MetaPipeline {
+		dirtyName = pipelineType.String() + "-" + dirtyName
+	}
+	resourceName := naming.ToValidNameTruncated(dirtyName, 31)
+
+	if tektonClient != nil {
+		_, err := tektonClient.TektonV1alpha1().PipelineResources(ns).Get(resourceName, metav1.GetOptions{})
+		if err == nil {
+			return resourceName + "-" + rand.String(5)
+		}
+	}
 	return resourceName
 }
 

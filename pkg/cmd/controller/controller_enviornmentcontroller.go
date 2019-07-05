@@ -223,8 +223,8 @@ func (o *ControllerEnvironmentOptions) Run() error {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle(HealthPath, http.HandlerFunc(o.health))
-	mux.Handle(ReadyPath, http.HandlerFunc(o.ready))
+	mux.Handle(healthPath, http.HandlerFunc(o.health))
+	mux.Handle(readyPath, http.HandlerFunc(o.ready))
 
 	indexPaths := []string{"/", "/index.html"}
 	for _, p := range indexPaths {
@@ -510,10 +510,17 @@ func (o *ControllerEnvironmentOptions) registerWebHook(webhookURL string, secret
 
 	var provider gits.GitProvider
 	var err error
+
 	if o.GitKind != "" {
-		provider, err = o.GitProviderForGitServerURL(gitURL, o.GitKind)
+		gitInfo, err := gits.ParseGitURL(gitURL)
 		if err != nil {
-			return errors.Wrapf(err, "failed to create git provider for git URL %s kind %s", gitURL, o.GitKind)
+			return err
+		}
+		gitHostURL := gitInfo.HostURL()
+
+		provider, err = o.GitProviderForGitServerURL(gitHostURL, o.GitKind)
+		if err != nil {
+			return errors.Wrapf(err, "failed to create git provider for git URL %s kind %s", gitHostURL, o.GitKind)
 		}
 	} else {
 		provider, err = o.GitProviderForURL(gitURL, "creating webhook git provider")

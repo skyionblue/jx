@@ -18,6 +18,8 @@ package cmd
 
 import (
 	"fmt"
+
+	"github.com/jenkins-x/jx/pkg/cmd/boot"
 	"github.com/jenkins-x/jx/pkg/cmd/cloudbees"
 	"github.com/jenkins-x/jx/pkg/cmd/compliance"
 	"github.com/jenkins-x/jx/pkg/cmd/controller"
@@ -34,6 +36,8 @@ import (
 	"github.com/jenkins-x/jx/pkg/cmd/stop"
 	"github.com/jenkins-x/jx/pkg/cmd/sync"
 	"github.com/jenkins-x/jx/pkg/cmd/uninstall"
+	"github.com/jenkins-x/jx/pkg/cmd/update"
+	"github.com/jenkins-x/jx/pkg/cmd/upgrade"
 
 	"io"
 	"os"
@@ -85,12 +89,13 @@ func NewJXCommand(f clients.Factory, in terminal.FileReader, out terminal.FileWr
 	deleteCommands := deletecmd.NewCmdDelete(commonOpts)
 	getCommands := get.NewCmdGet(commonOpts)
 	editCommands := edit.NewCmdEdit(commonOpts)
-	updateCommands := NewCmdUpdate(commonOpts)
+	updateCommands := update.NewCmdUpdate(commonOpts)
 
 	installCommands := []*cobra.Command{
+		boot.NewCmdBoot(commonOpts),
 		create.NewCmdInstall(commonOpts),
 		uninstall.NewCmdUninstall(commonOpts),
-		NewCmdUpgrade(commonOpts),
+		upgrade.NewCmdUpgrade(commonOpts),
 	}
 	installCommands = append(installCommands, findCommands("cluster", createCommands, deleteCommands)...)
 	installCommands = append(installCommands, findCommands("cluster", updateCommands)...)

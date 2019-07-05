@@ -10,6 +10,7 @@ import (
 	"github.com/google/go-github/github"
 	"github.com/jenkins-x/jx/pkg/auth"
 	"github.com/jenkins-x/jx/pkg/log"
+	"github.com/pkg/errors"
 )
 
 type GerritProvider struct {
@@ -141,6 +142,11 @@ func (p *GerritProvider) CreatePullRequest(data *GitPullRequestArguments) (*GitP
 	return nil, nil
 }
 
+// UpdatePullRequest updates pull request with number using data
+func (p *GerritProvider) UpdatePullRequest(data *GitPullRequestArguments, number int) (*GitPullRequest, error) {
+	return nil, errors.Errorf("Not yet implemented for gerrit")
+}
+
 func (p *GerritProvider) UpdatePullRequestStatus(pr *GitPullRequest) error {
 	return nil
 }
@@ -265,6 +271,11 @@ func (p *GerritProvider) ListReleases(org string, name string) ([]*GitRelease, e
 	return nil, nil
 }
 
+// GetRelease returns the release info for org, repo name and tag
+func (p *GerritProvider) GetRelease(org string, name string, tag string) (*GitRelease, error) {
+	return nil, nil
+}
+
 func (p *GerritProvider) JenkinsWebHookPath(gitURL string, secret string) string {
 	return ""
 }
@@ -325,4 +336,9 @@ func (p *GerritProvider) ListCommits(owner, repo string, opt *ListCommitsArgumen
 // AddLabelsToIssue adds labels to issues or pullrequests
 func (p *GerritProvider) AddLabelsToIssue(owner, repo string, number int, labels []string) error {
 	return fmt.Errorf("Getting content not supported on gerrit")
+}
+
+// GetLatestRelease fetches the latest release from the git provider for org and name
+func (p *GerritProvider) GetLatestRelease(org string, name string) (*GitRelease, error) {
+	return nil, nil
 }

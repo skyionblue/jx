@@ -52,6 +52,8 @@ func TestCreatePipelineRunInfo(t *testing.T) {
 				TaskRun:        "abayer-jx-demo-qs-master-1-build-vhz8d",
 				Parents:        []string{},
 			}},
+			Type:        tekton.BuildPipeline,
+			CreatedTime: *parseTime(t, "2019-02-21T17:10:48-05:00"),
 		},
 		prName: "abayer-jx-demo-qs-master-1",
 	}, {
@@ -91,6 +93,8 @@ func TestCreatePipelineRunInfo(t *testing.T) {
 				TaskRun:        "abayer-js-test-repo-master-1-second-9czt5",
 				Parents:        []string{},
 			}},
+			Type:        tekton.BuildPipeline,
+			CreatedTime: *parseTime(t, "2019-02-21T17:02:43-05:00"),
 		},
 		prName: "abayer-js-test-repo-master-1",
 	}, {
@@ -134,6 +138,8 @@ func TestCreatePipelineRunInfo(t *testing.T) {
 					Parents:        []string{"Parent"},
 				}},
 			}},
+			Type:        tekton.BuildPipeline,
+			CreatedTime: *parseTime(t, "2019-02-21T17:07:36-05:00"),
 		},
 		prName: "abayer-js-test-repo-nested-1",
 	}, {
@@ -173,6 +179,8 @@ func TestCreatePipelineRunInfo(t *testing.T) {
 				TaskRun:        "abayer-js-test-repo-master-1-second-wglk8",
 				Parents:        []string{},
 			}},
+			Type:        tekton.BuildPipeline,
+			CreatedTime: *parseTime(t, "2019-03-05T15:06:13-05:00"),
 		},
 		prName: "abayer-js-test-repo-master-1",
 	}, {
@@ -189,13 +197,13 @@ func TestCreatePipelineRunInfo(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			testCaseDir := path.Join("test_data", "pipeline_info", tt.name)
 
-			jxObjects := []runtime.Object{tekton_helpers_test.AssertLoadPipelineActivity(t, testCaseDir)}
-			structure := tekton_helpers_test.AssertLoadPipelineStructure(t, testCaseDir)
+			jxObjects := []runtime.Object{tekton_helpers_test.AssertLoadSinglePipelineActivity(t, testCaseDir)}
+			structure := tekton_helpers_test.AssertLoadSinglePipelineStructure(t, testCaseDir)
 			if structure != nil {
 				jxObjects = append(jxObjects, structure)
 			}
 
-			tektonObjects := []runtime.Object{tekton_helpers_test.AssertLoadPipelineRun(t, testCaseDir), tekton_helpers_test.AssertLoadPipeline(t, testCaseDir)}
+			tektonObjects := []runtime.Object{tekton_helpers_test.AssertLoadSinglePipelineRun(t, testCaseDir), tekton_helpers_test.AssertLoadSinglePipeline(t, testCaseDir)}
 			tektonObjects = append(tektonObjects, tekton_helpers_test.AssertLoadTasks(t, testCaseDir))
 			tektonObjects = append(tektonObjects, tekton_helpers_test.AssertLoadTaskRuns(t, testCaseDir))
 			tektonObjects = append(tektonObjects, tekton_helpers_test.AssertLoadPipelineResources(t, testCaseDir))

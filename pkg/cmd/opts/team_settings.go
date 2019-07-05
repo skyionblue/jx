@@ -6,9 +6,8 @@ import (
 	"reflect"
 
 	"github.com/jenkins-x/jx/pkg/jenkins"
+	"github.com/jenkins-x/jx/pkg/kube/naming"
 	"github.com/jenkins-x/jx/pkg/users"
-
-	"github.com/jenkins-x/jx/pkg/builds"
 
 	"github.com/jenkins-x/jx/pkg/log"
 
@@ -31,18 +30,21 @@ const (
 
 // TeamSettings returns the team settings
 func (o *CommonOptions) TeamSettings() (*v1.TeamSettings, error) {
+	_, teamSettings, err := o.DevEnvAndTeamSettings()
+	return teamSettings, err
+}
+
+// DevEnvAndTeamSettings returns the Dev Environment and Team settings
+func (o *CommonOptions) DevEnvAndTeamSettings() (*v1.Environment, *v1.TeamSettings, error) {
 	var teamSettings *v1.TeamSettings
+	var devEnv *v1.Environment
 	err := o.ModifyDevEnvironment(func(env *v1.Environment) error {
+		devEnv = env
 		teamSettings = &env.Spec.TeamSettings
-		if teamSettings.BuildPackURL == "" {
-			teamSettings.BuildPackURL = builds.KubernetesWorkloadBuildPackURL
-		}
-		if teamSettings.BuildPackRef == "" {
-			teamSettings.BuildPackRef = builds.KubernetesWorkloadBuildPackRef
-		}
+		teamSettings.DefaultMissingValues()
 		return nil
 	})
-	return teamSettings, err
+	return devEnv, teamSettings, err
 }
 
 // TeamBranchPatterns returns the team branch patterns used to enable CI/CD on branches when creating/importing projects
@@ -370,13 +372,15 @@ func (o *CommonOptions) ModifyUser(userName string, callback func(env *v1.User) 
 // GetUsername returns current user name
 func (o *CommonOptions) GetUsername(userName string) (string, error) {
 	if userName == "" {
-		u, err := user.Current()
-		if err != nil {
-			return userName, errors.Wrap(err, "Could not find the current user name. Please pass it in explicitly via the argument '--username'")
+		if !o.GetFactory().IsInCluster() {
+			u, err := user.Current()
+			if err != nil {
+				return userName, errors.Wrap(err, "Could not find the current user name. Please pass it in explicitly via the argument '--username'")
+			}
+			userName = u.Username
 		}
-		userName = u.Username
 	}
-	return kube.ToValidNameTruncated(userName, 63), nil
+	return naming.ToValidNameTruncated(userName, 63), nil
 }
 
 // EnableRemoteKubeCluster lets setup this command to work with a remote cluster without a jx install

@@ -1,16 +1,15 @@
 package create
 
 import (
-	"context"
 	"fmt"
-
+	"github.com/spf13/viper"
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jenkins-x/jx/pkg/cmd/step/git"
 
 	"github.com/jenkins-x/jx/pkg/cmd/helper"
 	"github.com/jenkins-x/jx/pkg/prow"
@@ -18,6 +17,7 @@ import (
 	"github.com/ghodss/yaml"
 	jxclient "github.com/jenkins-x/jx/pkg/client/clientset/versioned"
 	"github.com/jenkins-x/jx/pkg/cmd/opts"
+	syntaxstep "github.com/jenkins-x/jx/pkg/cmd/step/syntax"
 	"github.com/jenkins-x/jx/pkg/cmd/templates"
 	"github.com/jenkins-x/jx/pkg/config"
 	"github.com/jenkins-x/jx/pkg/gits"
@@ -33,17 +33,14 @@ import (
 	pipelineapi "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
 	tektonclient "github.com/tektoncd/pipeline/pkg/client/clientset/versioned"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kubeclient "k8s.io/client-go/kubernetes"
 )
 
 const (
-	kanikoDockerImage     = "gcr.io/kaniko-project/executor:9912ccbf8d22bbafbf971124600fbb0b13b9cbd6"
-	kanikoSecretMount     = "/kaniko-secret/secret.json"
-	kanikoSecretName      = "kaniko-secret"
-	kanikoSecretKey       = "kaniko-secret"
-	defaultContainerImage = "gcr.io/jenkinsxio/builder-maven"
+	kanikoSecretMount = "/kaniko-secret/secret.json"
+	kanikoSecretName  = kube.SecretKaniko
+	kanikoSecretKey   = kube.SecretKaniko
 )
 
 var (
@@ -62,8 +59,6 @@ var (
 		jx step create task --view
 
 			`)
-
-	ipAddressRegistryRegex = regexp.MustCompile(`\d+\.\d+\.\d+\.\d+.\d+(:\d+)?`)
 )
 
 // StepCreateTaskOptions contains the command line flags
@@ -96,6 +91,7 @@ type StepCreateTaskOptions struct {
 	Duration          time.Duration
 	FromRepo          bool
 	NoKaniko          bool
+	SemanticRelease   bool
 	KanikoImage       string
 	KanikoSecretMount string
 	KanikoSecret      string
@@ -103,9 +99,8 @@ type StepCreateTaskOptions struct {
 	ProjectID         string
 	DockerRegistry    string
 	DockerRegistryOrg string
-
-	PodTemplates        map[string]*corev1.Pod
-	missingPodTemplates map[string]bool
+	AdditionalEnvVars map[string]string
+	PodTemplates      map[string]*corev1.Pod
 
 	stepCounter          int
 	GitInfo              *gits.GitRepository
@@ -117,11 +112,17 @@ type StepCreateTaskOptions struct {
 	version              string
 	previewVersionPrefix string
 	VersionResolver      *opts.VersionResolver
-	cloneDir             string
+	CloneDir             string
 }
 
 // NewCmdStepCreateTask Creates a new Command object
 func NewCmdStepCreateTask(commonOpts *opts.CommonOptions) *cobra.Command {
+	cmd, _ := NewCmdStepCreateTaskAndOption(commonOpts)
+	return cmd
+}
+
+// NewCmdStepCreateTaskAndOption Creates a new Command object and returns the options
+func NewCmdStepCreateTaskAndOption(commonOpts *opts.CommonOptions) (*cobra.Command, *StepCreateTaskOptions) {
 	options := &StepCreateTaskOptions{
 		StepOptions: opts.StepOptions{
 			CommonOptions: commonOpts,
@@ -142,7 +143,7 @@ func NewCmdStepCreateTask(commonOpts *opts.CommonOptions) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&options.OutDir, "output", "o", "out", "The directory to write the output to as YAML. Defaults to 'out'")
+	cmd.Flags().StringVarP(&options.OutDir, outputOptionName, "o", "out", "The directory to write the output to as YAML. Defaults to 'out'")
 	cmd.Flags().StringVarP(&options.Branch, "branch", "", "", "The git branch to trigger the build in. Defaults to the current local branch name")
 	cmd.Flags().StringVarP(&options.Revision, "revision", "", "", "The git revision to checkout, can be a branch name or git sha")
 	cmd.Flags().StringVarP(&options.PipelineKind, "kind", "k", "release", "The kind of pipeline to create such as: "+strings.Join(jenkinsfile.PipelineKinds, ", "))
@@ -150,15 +151,30 @@ func NewCmdStepCreateTask(commonOpts *opts.CommonOptions) *cobra.Command {
 	cmd.Flags().StringArrayVarP(&options.CustomEnvs, "env", "e", nil, "List of custom environment variables to be applied to resources that are created")
 	cmd.Flags().StringVarP(&options.Trigger, "trigger", "t", string(pipelineapi.PipelineTriggerTypeManual), "The kind of pipeline trigger")
 	cmd.Flags().StringVarP(&options.CloneGitURL, "clone-git-url", "", "", "Specify the git URL to clone to a temporary directory to get the source code")
+	cmd.Flags().StringVarP(&options.CloneDir, "clone-dir", "", "", "Specify the directory of the directory containing the git clone")
 	cmd.Flags().StringVarP(&options.PullRequestNumber, "pr-number", "", "", "If a Pull Request this is it's number")
-	cmd.Flags().BoolVarP(&options.NoApply, "no-apply", "", false, "Disables creating the Pipeline resources in the kubernetes cluster and just outputs the generated Task to the console or output file")
+	cmd.Flags().StringVarP(&options.BuildNumber, "build-number", "", "", "The build number")
+	cmd.Flags().BoolVarP(&options.NoApply, noApplyOptionName, "", false, "Disables creating the Pipeline resources in the kubernetes cluster and just outputs the generated Task to the console or output file")
 	cmd.Flags().BoolVarP(&options.DryRun, "dry-run", "", false, "Disables creating the Pipeline resources in the kubernetes cluster and just outputs the generated Task to the console or output file, without side effects")
 	cmd.Flags().BoolVarP(&options.InterpretMode, "interpret", "", false, "Enable interpret mode. Rather than spinning up Tekton CRDs to create a Pod just invoke the commands in the current shell directly. Useful for bootstrapping installations of Jenkins X and tekton using a pipeline before you have installed Tekton.")
 	cmd.Flags().BoolVarP(&options.ViewSteps, "view", "", false, "Just view the steps that would be created")
 	cmd.Flags().BoolVarP(&options.EffectivePipeline, "effective-pipeline", "", false, "Just view the effective pipeline definition that would be created")
+	cmd.Flags().BoolVarP(&options.SemanticRelease, "semantic-release", "", false, "Enable semantic releases")
 
 	options.AddCommonFlags(cmd)
-	return cmd
+	options.setupViper(cmd)
+	return cmd, options
+}
+
+func (o *StepCreateTaskOptions) setupViper(cmd *cobra.Command) {
+	replacer := strings.NewReplacer("-", "_")
+	viper.SetEnvKeyReplacer(replacer)
+
+	_ = viper.BindEnv(noApplyOptionName)
+	_ = viper.BindPFlag(noApplyOptionName, cmd.Flags().Lookup(noApplyOptionName))
+
+	_ = viper.BindEnv(outputOptionName)
+	_ = viper.BindPFlag(outputOptionName, cmd.Flags().Lookup(outputOptionName))
 }
 
 // AddCommonFlags adds common CLI options
@@ -171,11 +187,11 @@ func (o *StepCreateTaskOptions) AddCommonFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVarP(&o.TargetPath, "target-path", "", "", "The target path appended to /workspace/${source} to clone the source code")
 	cmd.Flags().StringVarP(&o.SourceName, "source", "", "source", "The name of the source repository")
 	cmd.Flags().StringVarP(&o.CustomImage, "image", "", "", "Specify a custom image to use for the steps which overrides the image in the PodTemplates")
-	cmd.Flags().StringVarP(&o.DefaultImage, "default-image", "", defaultContainerImage, "Specify the docker image to use if there is no image specified for a step and there's no Pod Template")
+	cmd.Flags().StringVarP(&o.DefaultImage, "default-image", "", syntax.DefaultContainerImage, "Specify the docker image to use if there is no image specified for a step and there's no Pod Template")
 	cmd.Flags().BoolVarP(&o.DeleteTempDir, "delete-temp-dir", "", true, "Deletes the temporary directory of cloned files if using the 'clone-git-url' option")
 	cmd.Flags().BoolVarP(&o.NoReleasePrepare, "no-release-prepare", "", false, "Disables creating the release version number and tagging git and triggering the release pipeline from the new tag")
 	cmd.Flags().BoolVarP(&o.NoKaniko, "no-kaniko", "", false, "Disables using kaniko directly for building docker images")
-	cmd.Flags().StringVarP(&o.KanikoImage, "kaniko-image", "", kanikoDockerImage, "The docker image for Kaniko")
+	cmd.Flags().StringVarP(&o.KanikoImage, "kaniko-image", "", syntax.KanikoDockerImage, "The docker image for Kaniko")
 	cmd.Flags().StringVarP(&o.KanikoSecretMount, "kaniko-secret-mount", "", kanikoSecretMount, "The mount point of the Kaniko secret")
 	cmd.Flags().StringVarP(&o.KanikoSecret, "kaniko-secret", "", kanikoSecretName, "The name of the kaniko secret")
 	cmd.Flags().StringVarP(&o.KanikoSecretKey, "kaniko-secret-key", "", kanikoSecretKey, "The key in the Kaniko Secret to mount")
@@ -187,171 +203,101 @@ func (o *StepCreateTaskOptions) AddCommonFlags(cmd *cobra.Command) {
 
 // Run implements this command
 func (o *StepCreateTaskOptions) Run() error {
-	if o.InterpretMode {
-		// lets allow this command to run in an empty cluster
-		o.RemoteCluster = true
-	}
-	settings, err := o.TeamSettings()
-	if err != nil {
-		return err
-	}
+	var effectiveProjectConfig *config.ProjectConfig
+	var err error
 
 	tektonClient, jxClient, kubeClient, ns, err := o.getClientsAndNamespace()
 	if err != nil {
 		return err
 	}
 
-	if o.ProjectID == "" {
-		if !o.RemoteCluster {
-			data, err := kube.ReadInstallValues(kubeClient, ns)
-			if err != nil {
-				return errors.Wrapf(err, "failed to read install values from namespace %s", ns)
+	if o.CloneDir == "" {
+		o.CloneDir, err = os.Getwd()
+		if err != nil {
+			return err
+		}
+	}
+
+	pr, err := o.parsePullRefs()
+	if err != nil {
+		return errors.Wrapf(err, "Unable to find or parse PULL_REFS from custom environment")
+	}
+
+	exists, err := o.effectiveProjectConfigExists()
+	if err != nil {
+		return err
+	}
+	if !exists {
+		// TODO this branch all things depending on it can be removed once the meta pipeline is working
+		// TODO keeping this to keep existing behavior until then (HF)
+		if o.CloneGitURL != "" {
+			o.CloneDir = o.cloneGitRepositoryToTempDir(o.CloneGitURL, o.Branch, o.PullRequestNumber, o.Revision)
+			if o.DeleteTempDir {
+				defer func() {
+					log.Logger().Infof("removing the temp directory %s", o.CloneDir)
+					err := os.RemoveAll(o.CloneDir)
+					if err != nil {
+						log.Logger().Warnf("failed to delete dir %s: %s", o.CloneDir, err.Error())
+					}
+				}()
 			}
-			o.ProjectID = data["projectID"]
-		}
-		if o.ProjectID == "" {
-			o.ProjectID = "todo"
-		}
-	}
-	if o.DefaultImage == "" {
-		o.DefaultImage = defaultContainerImage
-	}
-	if o.KanikoImage == "" {
-		o.KanikoImage = kanikoDockerImage
-	}
-	if o.KanikoSecretMount == "" {
-		o.KanikoSecretMount = kanikoSecretMount
-	}
-	log.Logger().Debugf("cloning git for %s", o.CloneGitURL)
-	if o.VersionResolver == nil {
-		o.VersionResolver, err = o.CreateVersionResolver("", "")
-		if err != nil {
-			return err
-		}
-	}
-	var pr *prow.PullRefs
-	if o.CloneGitURL != "" {
-		o.cloneDir = o.cloneGitRepositoryToTempDir(o.CloneGitURL, o.Branch, o.PullRequestNumber, o.Revision)
-		if o.DeleteTempDir {
-			defer func() {
-				log.Logger().Infof("removing the temp directory %s", o.cloneDir)
-				err := os.RemoveAll(o.cloneDir)
-				if err != nil {
-					log.Logger().Warnf("failed to delete dir %s: %s", o.cloneDir, err.Error())
-				}
-			}()
-		}
-		pr, err = o.mergePullRefs(o.cloneDir)
-		if err != nil {
-			return errors.Wrapf(err, "Unable to merge PULL_REFS in %s", o.cloneDir)
+			// Add the REPO_URL env var
+			o.CustomEnvs = append(o.CustomEnvs, fmt.Sprintf("%s=%s", "REPO_URL", o.CloneGitURL))
+			err = o.mergePullRefs(pr, o.CloneDir)
+			if err != nil {
+				return errors.Wrapf(err, "Unable to merge PULL_REFS %s in %s", pr, o.CloneDir)
+			}
 		}
 	}
 
-	log.Logger().Debugf("setting up docker registry for %s", o.CloneGitURL)
-
-	if o.DockerRegistry == "" && !o.InterpretMode {
-		data, err := kube.GetConfigMapData(kubeClient, kube.ConfigMapJenkinsDockerRegistry, ns)
-		if err != nil {
-			return fmt.Errorf("could not find ConfigMap %s in namespace %s: %s", kube.ConfigMapJenkinsDockerRegistry, ns, err)
-		}
-		o.DockerRegistry = data["docker.registry"]
-		if o.DockerRegistry == "" {
-			return util.MissingOption("docker-registry")
-		}
-	}
-
-	if o.cloneDir == "" {
-		o.cloneDir, err = os.Getwd()
-		if err != nil {
-			return err
-		}
-	}
-
-	o.GitInfo, err = o.FindGitInfo(o.cloneDir)
+	o.GitInfo, err = o.FindGitInfo(o.CloneDir)
 	if err != nil {
-		return errors.Wrapf(err, "failed to find git information from dir %s", o.cloneDir)
+		return errors.Wrapf(err, "failed to find git information from dir %s", o.CloneDir)
 	}
+
 	if o.Branch == "" {
-		o.Branch, err = o.Git().Branch(o.cloneDir)
+		o.Branch, err = o.Git().Branch(o.CloneDir)
 		if err != nil {
-			return errors.Wrapf(err, "failed to find git branch from dir %s", o.cloneDir)
+			return errors.Wrapf(err, "failed to find git branch from dir %s", o.CloneDir)
 		}
-	}
-
-	if o.NoApply || o.DryRun || o.InterpretMode {
-		o.BuildNumber = "1"
-	} else {
-		log.Logger().Debugf("generating build number...")
-
-		pipelineResourceName := tekton.PipelineResourceName(o.GitInfo, o.Branch, o.Context)
-
-		o.BuildNumber, err = tekton.GenerateNextBuildNumber(tektonClient, jxClient, ns, o.GitInfo, o.Branch, o.Duration, pipelineResourceName)
-		if err != nil {
-			return err
-		}
-		log.Logger().Debugf("generated build number %s for %s", o.BuildNumber, o.CloneGitURL)
-	}
-	projectConfig, projectConfigFile, err := o.loadProjectConfig()
-	if err != nil {
-		return errors.Wrapf(err, "failed to load project config in dir %s", o.cloneDir)
-	}
-	if o.BuildPackURL == "" || o.BuildPackRef == "" {
-		if projectConfig.BuildPackGitURL != "" {
-			o.BuildPackURL = projectConfig.BuildPackGitURL
-		} else if o.BuildPackURL == "" {
-			o.BuildPackURL = settings.BuildPackURL
-		}
-		if projectConfig.BuildPackGitURef != "" {
-			o.BuildPackRef = projectConfig.BuildPackGitURef
-		} else if o.BuildPackRef == "" {
-			o.BuildPackRef = settings.BuildPackRef
-		}
-	}
-	if o.BuildPackURL == "" {
-		return util.MissingOption("url")
-	}
-	if o.BuildPackRef == "" {
-		return util.MissingOption("ref")
-	}
-	if o.PipelineKind == "" {
-		return util.MissingOption("kind")
-	}
-
-	if o.Pack == "" {
-		o.Pack = projectConfig.BuildPack
-	}
-	if o.Pack == "" {
-		o.Pack, err = o.DiscoverBuildPack(o.cloneDir, projectConfig, o.Pack)
-		if err != nil {
-			return errors.Wrapf(err, "failed to discover the build pack")
-		}
-	}
-
-	if o.Pack == "" {
-		return util.MissingOption("pack")
 	}
 
 	o.PodTemplates, err = kube.LoadPodTemplates(kubeClient, ns)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "Unable to load pod templates")
 	}
-	o.missingPodTemplates = map[string]bool{}
 
-	packsDir, err := gitresolver.InitBuildPack(o.Git(), o.BuildPackURL, o.BuildPackRef)
+	pipelineName := tekton.PipelineResourceNameFromGitInfo(o.GitInfo, o.Branch, o.Context, tekton.BuildPipeline, tektonClient, ns)
+
+	exists, err = o.effectiveProjectConfigExists()
 	if err != nil {
 		return err
 	}
-
-	resolver, err := gitresolver.CreateResolver(packsDir, o.Git())
-	if err != nil {
-		return err
+	if exists {
+		effectiveProjectConfig, err = o.loadEffectiveProjectConfig()
+		log.Logger().Debug("loaded effective project configuration from file")
+	} else {
+		// TODO: This branch also goes away when the metapipeline is actually in place in pipelinerunner (AB)
+		log.Logger().Debug("creating effective project configuration")
+		effectiveProjectConfig, err = o.createEffectiveProjectConfigFromOptions(tektonClient, jxClient, kubeClient, ns, pipelineName)
+		if err != nil {
+			return errors.Wrap(err, "failed to create effective project configuration")
+		}
 	}
 
-	log.Logger().Debug("about to create the tekton CRDs")
-	tektonCRDs, err := o.GenerateTektonCRDs(packsDir, projectConfig, projectConfigFile, resolver, ns)
+	log.Logger().Debug("setting build version")
+	err = o.setBuildVersion(effectiveProjectConfig.PipelineConfig)
 	if err != nil {
-		return errors.Wrap(err, "failed to generate Tekton CRD")
+		return errors.Wrapf(err, "failed to set the version on release pipelines")
 	}
+
+	log.Logger().Debug("creating Tekton CRDs")
+	tektonCRDs, err := o.generateTektonCRDs(effectiveProjectConfig, ns, pipelineName)
+	if err != nil {
+		return errors.Wrap(err, "failed to generate Tekton CRDs")
+	}
+	log.Logger().Debugf("tekton CRDs for %s created", tektonCRDs.PipelineRun().Name)
+	o.Results = *tektonCRDs
 
 	if o.ViewSteps {
 		err = o.viewSteps(tektonCRDs.Tasks()...)
@@ -361,22 +307,18 @@ func (o *StepCreateTaskOptions) Run() error {
 		return nil
 	}
 
-	log.Logger().Debugf("created tekton CRDs for %s", tektonCRDs.PipelineRun().Name)
+	if o.InterpretMode {
+		return o.interpretPipeline(ns, effectiveProjectConfig, tektonCRDs)
+	}
 
-	o.Results = *tektonCRDs
-
-	if o.NoApply || o.DryRun || o.InterpretMode {
-		if o.InterpretMode {
-			return o.interpretPipeline(ns, projectConfig, tektonCRDs)
-		}
-
+	if viper.GetBool(noApplyOptionName) || o.DryRun {
 		log.Logger().Infof("Writing output ")
-		err := tektonCRDs.WriteToDisk(o.OutDir, nil)
+		err := tektonCRDs.WriteToDisk(viper.GetString(outputOptionName), nil)
 		if err != nil {
 			return errors.Wrapf(err, "Failed to output Tekton CRDs")
 		}
 	} else {
-		activityKey := tekton.GeneratePipelineActivity(o.BuildNumber, o.Branch, o.GitInfo, pr)
+		activityKey := tekton.GeneratePipelineActivity(o.BuildNumber, o.Branch, o.GitInfo, pr, tekton.BuildPipeline)
 
 		log.Logger().Debugf(" PipelineActivity for %s created successfully", tektonCRDs.Name())
 
@@ -392,148 +334,168 @@ func (o *StepCreateTaskOptions) Run() error {
 	return nil
 }
 
-// GenerateTektonCRDs creates the Pipeline, Task, PipelineResource, PipelineRun, and PipelineStructure CRDs that will be applied to actually kick off the pipeline
-func (o *StepCreateTaskOptions) GenerateTektonCRDs(packsDir string, projectConfig *config.ProjectConfig, projectConfigFile string, resolver jenkinsfile.ImportFileResolver, ns string) (*tekton.CRDWrapper, error) {
-	name := o.Pack
-	packDir := filepath.Join(packsDir, name)
-
-	pipelineConfig := projectConfig.PipelineConfig
-	if name != "none" {
-		pipelineFile := filepath.Join(packDir, jenkinsfile.PipelineConfigFileName)
-		exists, err := util.FileExists(pipelineFile)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to find build pack pipeline YAML: %s", pipelineFile)
-		}
-		if !exists {
-			return nil, fmt.Errorf("no build pack for %s exists at directory %s", name, packDir)
-		}
-		pipelineConfig, err = jenkinsfile.LoadPipelineConfig(pipelineFile, resolver, true, false)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to load build pack pipeline YAML: %s", pipelineFile)
-		}
-
-		localPipelineConfig := projectConfig.PipelineConfig
-		if localPipelineConfig != nil {
-			err = localPipelineConfig.ExtendPipeline(pipelineConfig, false)
-			if err != nil {
-				return nil, errors.Wrapf(err, "failed to override PipelineConfig using configuration in file %s", projectConfigFile)
-			}
-			pipelineConfig = localPipelineConfig
-		}
-	} else {
-		pipelineConfig.PopulatePipelinesFromDefault()
+func (o *StepCreateTaskOptions) createEffectiveProjectConfigFromOptions(tektonClient tektonclient.Interface, jxClient jxclient.Interface, kubeClient kubeclient.Interface, ns string, pipelineName string) (*config.ProjectConfig, error) {
+	if o.InterpretMode {
+		// lets allow this command to run in an empty cluster
+		o.RemoteCluster = true
 	}
-
-	if pipelineConfig == nil {
-		return nil, fmt.Errorf("failed to find PipelineConfig in file %s", projectConfigFile)
-	}
-
-	err := o.combineEnvVars(pipelineConfig)
+	settings, err := o.TeamSettings()
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to combine env vars")
+		return nil, err
 	}
 
+	if o.ProjectID == "" {
+		if !o.RemoteCluster {
+			data, err := kube.ReadInstallValues(kubeClient, ns)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to read install values from namespace %s", ns)
+			}
+			o.ProjectID = data["projectID"]
+		}
+		if o.ProjectID == "" {
+			o.ProjectID = "todo"
+		}
+	}
+	if o.DefaultImage == "" {
+		o.DefaultImage = syntax.DefaultContainerImage
+	}
+	log.Logger().Debugf("cloning git for %s", o.CloneGitURL)
+	if o.VersionResolver == nil {
+		o.VersionResolver, err = o.CreateVersionResolver("", "")
+		if err != nil {
+			return nil, err
+		}
+	}
+	if o.KanikoImage == "" {
+		o.KanikoImage = syntax.KanikoDockerImage
+	}
+	o.KanikoImage, err = o.VersionResolver.ResolveDockerImage(o.KanikoImage)
+	if err != nil {
+		return nil, err
+	}
+	if o.KanikoSecretMount == "" {
+		o.KanikoSecretMount = kanikoSecretMount
+	}
+
+	log.Logger().Debugf("setting up docker registry for %s", o.CloneGitURL)
+
+	if o.DockerRegistry == "" && !o.InterpretMode {
+		data, err := kube.GetConfigMapData(kubeClient, kube.ConfigMapJenkinsDockerRegistry, ns)
+		if err != nil {
+			return nil, fmt.Errorf("could not find ConfigMap %s in namespace %s: %s", kube.ConfigMapJenkinsDockerRegistry, ns, err)
+		}
+		o.DockerRegistry = data["docker.registry"]
+		if o.DockerRegistry == "" {
+			return nil, util.MissingOption("docker-registry")
+		}
+	}
+
+	if viper.GetBool(noApplyOptionName) || o.DryRun || o.InterpretMode {
+		o.BuildNumber = "1"
+	} else {
+		log.Logger().Debugf("generating build number...")
+		o.BuildNumber, err = tekton.GenerateNextBuildNumber(tektonClient, jxClient, ns, o.GitInfo, o.Branch, o.Duration, o.Context)
+		if err != nil {
+			return nil, err
+		}
+		log.Logger().Debugf("generated build number %s for %s", o.BuildNumber, o.CloneGitURL)
+	}
+	projectConfig, projectConfigFile, err := o.loadProjectConfig()
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to load project config in dir %s", o.CloneDir)
+	}
+	if o.BuildPackURL == "" || o.BuildPackRef == "" {
+		if projectConfig.BuildPackGitURL != "" {
+			o.BuildPackURL = projectConfig.BuildPackGitURL
+		} else if o.BuildPackURL == "" {
+			o.BuildPackURL = settings.BuildPackURL
+		}
+		if projectConfig.BuildPackGitURef != "" {
+			o.BuildPackRef = projectConfig.BuildPackGitURef
+		} else if o.BuildPackRef == "" {
+			o.BuildPackRef = settings.BuildPackRef
+		}
+	}
+	if o.BuildPackURL == "" {
+		return nil, util.MissingOption("url")
+	}
+	if o.BuildPackRef == "" {
+		return nil, util.MissingOption("ref")
+	}
+	if o.PipelineKind == "" {
+		return nil, util.MissingOption("kind")
+	}
+
+	if o.Pack == "" {
+		o.Pack = projectConfig.BuildPack
+	}
+	if o.Pack == "" {
+		o.Pack, err = o.DiscoverBuildPack(o.CloneDir, projectConfig, o.Pack)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to discover the build pack")
+		}
+	}
+
+	if o.Pack == "" {
+		return nil, util.MissingOption("pack")
+	}
+
+	packsDir, err := gitresolver.InitBuildPack(o.Git(), o.BuildPackURL, o.BuildPackRef)
+	if err != nil {
+		return nil, err
+	}
+
+	resolver, err := gitresolver.CreateResolver(packsDir, o.Git())
+	if err != nil {
+		return nil, err
+	}
+
+	log.Logger().Debug("creating effective project configuration")
+	effectiveProjectConfig, err := o.createEffectiveProjectConfig(packsDir, projectConfig, projectConfigFile, resolver, ns)
+	return effectiveProjectConfig, err
+}
+
+// createEffectiveProjectConfig creates the effective parsed pipeline which is then used to generate the Tekton CRDs.
+func (o *StepCreateTaskOptions) createEffectiveProjectConfig(packsDir string, projectConfig *config.ProjectConfig, projectConfigFile string, resolver jenkinsfile.ImportFileResolver, ns string) (*config.ProjectConfig, error) {
+	err := o.setBuildValues()
+	if err != nil {
+		return nil, err
+	}
+
+	createEffective := &syntaxstep.StepSyntaxEffectiveOptions{
+		Pack:              o.Pack,
+		BuildPackURL:      o.BuildPackURL,
+		BuildPackRef:      o.BuildPackRef,
+		Context:           o.Context,
+		CustomImage:       o.CustomImage,
+		DefaultImage:      o.DefaultImage,
+		UseKaniko:         !o.NoKaniko,
+		KanikoImage:       o.KanikoImage,
+		ProjectID:         o.ProjectID,
+		DockerRegistry:    o.DockerRegistry,
+		DockerRegistryOrg: o.DockerRegistryOrg,
+		SourceName:        o.SourceName,
+		CustomEnvs:        o.CustomEnvs,
+		GitInfo:           o.GitInfo,
+		PodTemplates:      o.PodTemplates,
+		VersionResolver:   o.VersionResolver,
+	}
+	commonCopy := *o.CommonOptions
+	createEffective.CommonOptions = &commonCopy
+
+	effectiveProjectConfig, err := createEffective.CreateEffectivePipeline(packsDir, projectConfig, projectConfigFile, resolver)
+	if err != nil {
+		return nil, errors.Wrapf(err, "effective pipeline creation failed")
+	}
 	// lets allow a `jenkins-x.yml` to specify we want to disable release prepare mode which can be useful for
 	// working with custom jenkins pipelines in custom jenkins servers
 	if projectConfig.NoReleasePrepare {
 		o.NoReleasePrepare = true
 	}
-	err = o.setVersionOnReleasePipelines(pipelineConfig)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to set the version on release pipelines")
-	}
 
-	var lifecycles *jenkinsfile.PipelineLifecycles
-	kind := o.PipelineKind
-	pipelines := pipelineConfig.Pipelines
-	switch kind {
-	case jenkinsfile.PipelineKindRelease:
-		lifecycles = pipelines.Release
-
-		// lets add a pre-step to setup the credentials
-		if !o.InterpretMode {
-			if lifecycles.Setup == nil {
-				lifecycles.Setup = &jenkinsfile.PipelineLifecycle{}
-			}
-			steps := []*syntax.Step{
-				{
-					Command: "jx step git credentials",
-					Name:    "jx-git-credentials",
-				},
-			}
-			lifecycles.Setup.Steps = append(steps, lifecycles.Setup.Steps...)
-		}
-
-	case jenkinsfile.PipelineKindPullRequest:
-		lifecycles = pipelines.PullRequest
-	case jenkinsfile.PipelineKindFeature:
-		lifecycles = pipelines.Feature
-	default:
-		return nil, fmt.Errorf("unknown pipeline kind %s. Supported values are %s", kind, strings.Join(jenkinsfile.PipelineKinds, ", "))
-	}
-
-	err = o.setBuildValues()
+	parsed, err := effectiveProjectConfig.GetPipeline(o.PipelineKind)
 	if err != nil {
 		return nil, err
-	}
-
-	var parsed *syntax.ParsedPipeline
-
-	if lifecycles != nil && lifecycles.Pipeline != nil {
-		parsed = lifecycles.Pipeline
-		for _, override := range pipelines.Overrides {
-			if override.MatchesPipeline(kind) {
-				parsed = syntax.ExtendParsedPipeline(parsed, override)
-			}
-		}
-	} else {
-		stage, err := o.CreateStageForBuildPack(name, projectConfig, pipelineConfig, lifecycles, kind, ns)
-		if err != nil {
-			return nil, errors.Wrapf(err, "Failed to generate stage from build pack")
-		}
-
-		parsed = &syntax.ParsedPipeline{
-			Stages: []syntax.Stage{*stage},
-		}
-
-		// If agent.container is specified, use that for default container configuration for step images.
-		containerName := pipelineConfig.Agent.GetImage()
-		if containerName != "" {
-			if o.PodTemplates != nil && o.PodTemplates[containerName] != nil {
-				podTemplate := o.PodTemplates[containerName]
-				container := podTemplate.Spec.Containers[0]
-				if !equality.Semantic.DeepEqual(container, corev1.Container{}) {
-					container.Name = ""
-					container.Command = []string{}
-					container.Args = []string{}
-					container.Image = ""
-					container.WorkingDir = ""
-					container.Stdin = false
-					container.TTY = false
-					if parsed.Options == nil {
-						parsed.Options = &syntax.RootOptions{}
-					}
-					parsed.Options.ContainerOptions = &container
-				}
-			}
-		}
-	}
-
-	parsed.AddContainerEnvVarsToPipeline(pipelineConfig.Env)
-
-	if pipelineConfig.ContainerOptions != nil {
-		mergedContainer, err := syntax.MergeContainers(pipelineConfig.ContainerOptions, parsed.Options.ContainerOptions)
-		if err != nil {
-			return nil, errors.Wrapf(err, "Could not merge containerOptions from parent")
-		}
-		parsed.Options.ContainerOptions = mergedContainer
-	}
-
-	// TODO: Seeing weird behavior seemingly related to https://golang.org/doc/faq#nil_error
-	// if err is reused, maybe we need to switch return types (perhaps upstream in build-pipeline)?
-	ctx := context.Background()
-	if validateErr := parsed.Validate(ctx); validateErr != nil {
-		return nil, errors.Wrapf(validateErr, "validation failed for Pipeline")
 	}
 
 	if o.EffectivePipeline {
@@ -545,19 +507,31 @@ func (o *StepCreateTaskOptions) GenerateTektonCRDs(packsDir string, projectConfi
 		log.Logger().Infof("%s", effectiveYaml)
 		return nil, nil
 	}
+	return effectiveProjectConfig, nil
+}
 
-	pipelineResourceName := tekton.PipelineResourceName(o.GitInfo, o.Branch, o.Context)
-	pipeline, tasks, structure, err := parsed.GenerateCRDs(pipelineResourceName, o.BuildNumber, ns, o.PodTemplates, o.GetDefaultTaskInputs().Params, o.SourceName, o.labels)
+// GenerateTektonCRDs creates the Pipeline, Task, PipelineResource, PipelineRun, and PipelineStructure CRDs that will be applied to actually kick off the pipeline
+func (o *StepCreateTaskOptions) generateTektonCRDs(effectiveProjectConfig *config.ProjectConfig, ns string, pipelineName string) (*tekton.CRDWrapper, error) {
+	if effectiveProjectConfig == nil {
+		return nil, errors.New("effective project config cannot be nil")
+	}
+
+	effectivePipeline, err := effectiveProjectConfig.GetPipeline(o.PipelineKind)
+	if err != nil {
+		return nil, errors.Wrapf(err, "unable to extract the requested pipeline")
+	}
+
+	pipeline, tasks, structure, err := effectivePipeline.GenerateCRDs(pipelineName, o.BuildNumber, ns, o.PodTemplates, o.getDefaultTaskInputs().Params, o.SourceName, o.labels, "")
 	if err != nil {
 		return nil, errors.Wrapf(err, "generation failed for Pipeline")
 	}
 
-	tasks, pipeline = o.EnhanceTasksAndPipeline(tasks, pipeline, pipelineConfig.Env)
-	resources := []*pipelineapi.PipelineResource{tekton.GenerateSourceRepoResource(pipelineResourceName, o.GitInfo, o.Revision)}
+	tasks, pipeline = o.enhanceTasksAndPipeline(tasks, pipeline, effectiveProjectConfig.PipelineConfig.Env)
+	resources := []*pipelineapi.PipelineResource{tekton.GenerateSourceRepoResource(pipelineName, o.GitInfo, o.Revision)}
 
 	var timeout *metav1.Duration
-	if parsed.Options != nil && parsed.Options.Timeout != nil {
-		timeout, err = parsed.Options.Timeout.ToDuration()
+	if effectivePipeline.Options != nil && effectivePipeline.Options.Timeout != nil {
+		timeout, err = effectivePipeline.Options.Timeout.ToDuration()
 		if err != nil {
 			return nil, errors.Wrapf(err, "parsing of pipeline timeout failed")
 		}
@@ -574,7 +548,7 @@ func (o *StepCreateTaskOptions) GenerateTektonCRDs(packsDir string, projectConfi
 
 func (o *StepCreateTaskOptions) loadProjectConfig() (*config.ProjectConfig, string, error) {
 	if o.Context != "" {
-		fileName := filepath.Join(o.cloneDir, fmt.Sprintf("jenkins-x-%s.yml", o.Context))
+		fileName := filepath.Join(o.CloneDir, fmt.Sprintf("jenkins-x-%s.yml", o.Context))
 		exists, err := util.FileExists(fileName)
 		if err != nil {
 			return nil, fileName, errors.Wrapf(err, "failed to check if file exists %s", fileName)
@@ -584,53 +558,40 @@ func (o *StepCreateTaskOptions) loadProjectConfig() (*config.ProjectConfig, stri
 			return config, fileName, err
 		}
 	}
-	return config.LoadProjectConfig(o.cloneDir)
+	return config.LoadProjectConfig(o.CloneDir)
 }
 
-// CreateStageForBuildPack generates the Task for a build pack
-func (o *StepCreateTaskOptions) CreateStageForBuildPack(languageName string, projectConfig *config.ProjectConfig, pipelineConfig *jenkinsfile.PipelineConfig, lifecycles *jenkinsfile.PipelineLifecycles, templateKind, ns string) (*syntax.Stage, error) {
-	if lifecycles == nil {
-		return nil, errors.New("generatePipeline: no lifecycles")
+func (o *StepCreateTaskOptions) effectiveProjectConfigExists() (bool, error) {
+	fileName := o.CloneDir
+
+	if o.Context == "" {
+		fileName = filepath.Join(fileName, "jenkins-x-effective.yml")
+	} else {
+		fileName = filepath.Join(fileName, fmt.Sprintf("jenkins-x-%s-effective.yml", o.Context))
 	}
 
-	// lets generate the pipeline using the build packs
-	container := pipelineConfig.Agent.GetImage()
-	if o.CustomImage != "" {
-		container = o.CustomImage
+	exists, err := util.FileExists(fileName)
+	if err != nil {
+		return false, errors.Wrapf(err, "failed to check existence of %s", fileName)
 	}
-	if container == "" {
-		container = o.DefaultImage
-	}
-	dir := o.getWorkspaceDir()
-
-	steps := []syntax.Step{}
-	for _, n := range lifecycles.All() {
-		l := n.Lifecycle
-		if l == nil {
-			continue
-		}
-		if !o.NoReleasePrepare && n.Name == "setversion" {
-			continue
-		}
-
-		for _, s := range l.Steps {
-			steps = append(steps, o.createSteps(languageName, projectConfig, pipelineConfig, templateKind, s, container, dir, n.Name)...)
-		}
-	}
-
-	stage := &syntax.Stage{
-		Name: syntax.DefaultStageNameForBuildPack,
-		Agent: &syntax.Agent{
-			Image: container,
-		},
-		Steps: steps,
-	}
-
-	return stage, nil
+	return exists, nil
 }
 
-// GetDefaultTaskInputs gets the base, built-in task parameters as an Input.
-func (o *StepCreateTaskOptions) GetDefaultTaskInputs() *pipelineapi.Inputs {
+func (o *StepCreateTaskOptions) loadEffectiveProjectConfig() (*config.ProjectConfig, error) {
+	fileName := o.CloneDir
+
+	if o.Context == "" {
+		fileName = filepath.Join(fileName, "jenkins-x-effective.yml")
+	} else {
+		fileName = filepath.Join(fileName, fmt.Sprintf("jenkins-x-%s-effective.yml", o.Context))
+	}
+
+	projectConfig, err := config.LoadProjectConfigFile(fileName)
+	return projectConfig, err
+}
+
+// getDefaultTaskInputs gets the base, built-in task parameters as an Input.
+func (o *StepCreateTaskOptions) getDefaultTaskInputs() *pipelineapi.Inputs {
 	inputs := &pipelineapi.Inputs{}
 	taskParams := o.createTaskParams()
 	if len(taskParams) > 0 {
@@ -655,9 +616,9 @@ func (o *StepCreateTaskOptions) enhanceTaskWithVolumesEnvAndInputs(task *pipelin
 	}
 }
 
-// EnhanceTasksAndPipeline takes a slice of Tasks and a Pipeline and modifies them to include built-in volumes, environment variables, and parameters
-func (o *StepCreateTaskOptions) EnhanceTasksAndPipeline(tasks []*pipelineapi.Task, pipeline *pipelineapi.Pipeline, env []corev1.EnvVar) ([]*pipelineapi.Task, *pipelineapi.Pipeline) {
-	taskInputs := o.GetDefaultTaskInputs()
+// enhanceTasksAndPipeline takes a slice of Tasks and a Pipeline and modifies them to include built-in volumes, environment variables, and parameters
+func (o *StepCreateTaskOptions) enhanceTasksAndPipeline(tasks []*pipelineapi.Task, pipeline *pipelineapi.Pipeline, env []corev1.EnvVar) ([]*pipelineapi.Task, *pipelineapi.Pipeline) {
+	taskInputs := o.getDefaultTaskInputs()
 
 	for _, t := range tasks {
 		o.enhanceTaskWithVolumesEnvAndInputs(t, env, *taskInputs)
@@ -736,26 +697,24 @@ func (o *StepCreateTaskOptions) createPipelineTaskParams() []pipelineapi.Param {
 func (o *StepCreateTaskOptions) setBuildValues() error {
 	labels := map[string]string{}
 	if o.GitInfo != nil {
-		labels["owner"] = o.GitInfo.Organisation
-		labels["repo"] = o.GitInfo.Name
+		labels[tekton.LabelOwner] = o.GitInfo.Organisation
+		labels[tekton.LabelRepo] = o.GitInfo.Name
 	}
-	labels["branch"] = o.Branch
+	labels[tekton.LabelBranch] = o.Branch
 	if o.Context != "" {
-		labels["context"] = o.Context
+		labels[tekton.LabelContext] = o.Context
 	}
+	labels[tekton.LabelBuild] = o.BuildNumber
 	return o.combineLabels(labels)
 }
 
 func (o *StepCreateTaskOptions) combineLabels(labels map[string]string) error {
 	// add any custom labels
-	for _, customLabel := range o.CustomLabels {
-		parts := strings.Split(customLabel, "=")
-		if len(parts) != 2 {
-			return errors.Errorf("expected 2 parts to label but got %v", len(parts))
-		}
-		labels[parts[0]] = parts[1]
+	customLabels, err := util.ExtractKeyValuePairs(o.CustomLabels, "=")
+	if err != nil {
+		return err
 	}
-	o.labels = labels
+	o.labels = util.MergeMaps(labels, customLabels)
 	return nil
 }
 
@@ -778,103 +737,6 @@ func (o *StepCreateTaskOptions) combineEnvVars(projectConfig *jenkinsfile.Pipeli
 	}
 	projectConfig.Env = syntax.EnvMapToSlice(envMap)
 	return nil
-}
-
-func (o *StepCreateTaskOptions) createSteps(languageName string, projectConfig *config.ProjectConfig, pipelineConfig *jenkinsfile.PipelineConfig, templateKind string, step *syntax.Step, containerName string, dir string, prefixPath string) []syntax.Step {
-	steps := []syntax.Step{}
-
-	if step.GetImage() != "" {
-		containerName = step.GetImage()
-	} else {
-		containerName = pipelineConfig.Agent.GetImage()
-	}
-
-	if step.Dir != "" {
-		dir = step.Dir
-	}
-	dir = strings.Replace(dir, "/home/jenkins/go/src/REPLACE_ME_GIT_PROVIDER/REPLACE_ME_ORG/REPLACE_ME_APP_NAME", o.getWorkspaceDir(), -1)
-
-	gitInfo := o.GitInfo
-	if gitInfo != nil {
-		gitProviderHost := gitInfo.Host
-		dir = strings.Replace(dir, opts.PlaceHolderAppName, gitInfo.Name, -1)
-		dir = strings.Replace(dir, opts.PlaceHolderOrg, gitInfo.Organisation, -1)
-		dir = strings.Replace(dir, opts.PlaceHolderGitProvider, gitProviderHost, -1)
-		dir = strings.Replace(dir, opts.PlaceHolderDockerRegistryOrg, strings.ToLower(o.GetDockerRegistryOrg(projectConfig, gitInfo)), -1)
-	} else {
-		log.Logger().Warnf("No GitInfo available!")
-	}
-
-	if step.GetCommand() != "" {
-		if containerName == "" {
-			containerName = o.DefaultImage
-			log.Logger().Warnf("No 'agent.container' specified in the pipeline configuration so defaulting to use: %s", containerName)
-		}
-
-		s := syntax.Step{}
-		o.stepCounter++
-		prefix := prefixPath
-		if prefix != "" {
-			prefix += "-"
-		}
-		stepName := step.Name
-		if stepName == "" {
-			stepName = "step" + strconv.Itoa(1+o.stepCounter)
-		}
-		s.Name = prefix + stepName
-		s.Command = o.replaceCommandText(step)
-		if o.CustomImage != "" {
-			s.Image = o.CustomImage
-		} else {
-			s.Image = containerName
-		}
-
-		workspaceDir := o.getWorkspaceDir()
-		if strings.HasPrefix(dir, "./") {
-			dir = workspaceDir + strings.TrimPrefix(dir, ".")
-		}
-		if !filepath.IsAbs(dir) {
-			dir = filepath.Join(workspaceDir, dir)
-		}
-		s.Dir = dir
-
-		modifyStep := o.modifyStep(projectConfig, s, gitInfo, pipelineConfig, templateKind, step, containerName, dir)
-
-		// let allow the docker images to have no actual version which is replaced via the version stream
-		image, err := o.VersionResolver.ResolveDockerImage(modifyStep.Image)
-		if err != nil {
-			log.Logger().Warnf("failed to resolve docker image version: %s due to %s", modifyStep.Image, err.Error())
-		} else {
-			modifyStep.Image = image
-		}
-
-		steps = append(steps, modifyStep)
-	} else if step.Loop != nil {
-		// Just copy in the loop step without altering it.
-		// TODO: We don't get magic around image resolution etc, but we avoid naming collisions that result otherwise.
-		steps = append(steps, *step)
-	}
-	for _, s := range step.Steps {
-		// TODO add child prefix?
-		childPrefixPath := prefixPath
-		steps = append(steps, o.createSteps(languageName, projectConfig, pipelineConfig, templateKind, s, containerName, dir, childPrefixPath)...)
-	}
-	return steps
-}
-
-// replaceCommandText lets remove any escaped "\$" stuff in the pipeline library
-// and replace any use of the VERSION file with using the VERSION env var
-func (o *StepCreateTaskOptions) replaceCommandText(step *syntax.Step) string {
-	answer := strings.Replace(step.GetFullCommand(), "\\$", "$", -1)
-
-	// lets replace the old way of setting versions
-	answer = strings.Replace(answer, "export VERSION=`cat VERSION` && ", "", 1)
-	answer = strings.Replace(answer, "export VERSION=$PREVIEW_VERSION && ", "", 1)
-
-	for _, text := range []string{"$(cat VERSION)", "$(cat ../VERSION)", "$(cat ../../VERSION)"} {
-		answer = strings.Replace(answer, text, "${VERSION}", -1)
-	}
-	return answer
 }
 
 func (o *StepCreateTaskOptions) getWorkspaceDir() string {
@@ -963,11 +825,20 @@ func (o *StepCreateTaskOptions) modifyEnvVars(container *corev1.Container, globa
 			})
 		}
 	}
-	if kube.GetSliceEnvVar(envVars, "JX_BATCH_MODE") == nil {
-		envVars = append(envVars, corev1.EnvVar{
-			Name:  "JX_BATCH_MODE",
-			Value: "true",
-		})
+	if o.InterpretMode {
+		if kube.GetSliceEnvVar(envVars, "JX_INTERPRET_PIPELINE") == nil {
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  "JX_INTERPRET_PIPELINE",
+				Value: "true",
+			})
+		}
+	} else {
+		if kube.GetSliceEnvVar(envVars, "JX_BATCH_MODE") == nil {
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  "JX_BATCH_MODE",
+				Value: "true",
+			})
+		}
 	}
 
 	for _, param := range o.pipelineParams {
@@ -1005,6 +876,14 @@ func (o *StepCreateTaskOptions) modifyEnvVars(container *corev1.Container, globa
 			Name:  "PREVIEW_VERSION",
 			Value: "${inputs.params.version}",
 		})
+	}
+	for k, v := range o.AdditionalEnvVars {
+		if kube.GetSliceEnvVar(envVars, k) == nil {
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  k,
+				Value: v,
+			})
+		}
 	}
 	container.Env = envVars
 }
@@ -1159,8 +1038,8 @@ func (o *StepCreateTaskOptions) cloneGitRepositoryToTempDir(gitURL string, branc
 	return tmpDir
 }
 
-// mergePullRefs merges the pull refs specified via the PULL_REFS environment variables.
-func (o *StepCreateTaskOptions) mergePullRefs(cloneDir string) (*prow.PullRefs, error) {
+// parsePullRefs creates a Prow PullRefs struct from the PULL_REFS environment variable, if it id set.
+func (o *StepCreateTaskOptions) parsePullRefs() (*prow.PullRefs, error) {
 	var pr *prow.PullRefs
 	var err error
 
@@ -1174,29 +1053,34 @@ func (o *StepCreateTaskOptions) mergePullRefs(cloneDir string) (*prow.PullRefs, 
 		}
 	}
 
-	if pr != nil {
-		var shas []string
-		for _, sha := range pr.ToMerge {
-			shas = append(shas, sha)
-		}
+	return pr, nil
+}
 
-		mergeOpts := opts.StepGitMergeOptions{
-			StepOptions: opts.StepOptions{
-				CommonOptions: o.CommonOptions,
-			},
-			Dir:        cloneDir,
-			BaseSHA:    pr.BaseSha,
-			SHAs:       shas,
-			BaseBranch: pr.BaseBranch,
-		}
-		mergeOpts.Verbose = true
-		err := mergeOpts.Run()
-		if err != nil {
-			return pr, errors.Wrapf(err, "failed to merge git shas %s with base sha %s", shas, pr.BaseSha)
-		}
+// mergePullRefs merges the pull refs specified into the git repository specified via CloneDir.
+func (o *StepCreateTaskOptions) mergePullRefs(pr *prow.PullRefs, cloneDir string) error {
+	if pr == nil {
+		return nil
+	}
+	var shas []string
+	for _, sha := range pr.ToMerge {
+		shas = append(shas, sha)
 	}
 
-	return pr, nil
+	mergeOpts := git.StepGitMergeOptions{
+		StepOptions: opts.StepOptions{
+			CommonOptions: o.CommonOptions,
+		},
+		Dir:        cloneDir,
+		BaseSHA:    pr.BaseSha,
+		SHAs:       shas,
+		BaseBranch: pr.BaseBranch,
+	}
+	mergeOpts.Verbose = true
+	err := mergeOpts.Run()
+	if err != nil {
+		return errors.Wrapf(err, "failed to merge git shas %s with base sha %s", shas, pr.BaseSha)
+	}
+	return nil
 }
 
 func (o *StepCreateTaskOptions) viewSteps(tasks ...*pipelineapi.Task) error {
@@ -1248,14 +1132,14 @@ func getVersionFromFile(dir string) (string, error) {
 	return "", errors.New("failed to read file " + versionFile)
 }
 
-func (o *StepCreateTaskOptions) setVersionOnReleasePipelines(pipelineConfig *jenkinsfile.PipelineConfig) error {
+func (o *StepCreateTaskOptions) setBuildVersion(pipelineConfig *jenkinsfile.PipelineConfig) error {
 	if o.NoReleasePrepare || o.ViewSteps || o.EffectivePipeline {
 		return nil
 	}
 	version := ""
 
 	if o.DryRun {
-		version, err := getVersionFromFile(o.cloneDir)
+		version, err := getVersionFromFile(o.CloneDir)
 		if err != nil {
 			log.Logger().Warn("No version file or incorrect content; using 0.0.1 as version")
 			version = "0.0.1"
@@ -1276,11 +1160,15 @@ func (o *StepCreateTaskOptions) setVersionOnReleasePipelines(pipelineConfig *jen
 		}
 		sv := release.SetVersion
 		if sv == nil {
+			command := "jx step next-version --use-git-tag-only --tag"
+			if o.SemanticRelease {
+				command = "jx step next-version --semantic-release --tag"
+			}
 			// lets create a default set version pipeline
 			sv = &jenkinsfile.PipelineLifecycle{
 				Steps: []*syntax.Step{
 					{
-						Command: "jx step next-version --use-git-tag-only --tag",
+						Command: command,
 						Name:    "next-version",
 						Comment: "tags git with the next version",
 					},
@@ -1292,7 +1180,7 @@ func (o *StepCreateTaskOptions) setVersionOnReleasePipelines(pipelineConfig *jen
 		if err != nil {
 			return err
 		}
-		version, err = getVersionFromFile(o.cloneDir)
+		version, err = getVersionFromFile(o.CloneDir)
 		if err != nil {
 			return err
 		}
@@ -1359,7 +1247,7 @@ func (o *StepCreateTaskOptions) runStepCommand(step *syntax.Step) error {
 		Args: []string{"-c", commandText},
 		Out:  o.Out,
 		Err:  o.Err,
-		Dir:  o.cloneDir,
+		Dir:  o.CloneDir,
 	}
 	result, err := cmd.RunWithoutRetry()
 	if err != nil {
@@ -1390,43 +1278,6 @@ func (o *StepCreateTaskOptions) invokeSteps(steps []*syntax.Step) error {
 		}
 	}
 	return nil
-}
-
-// modifyStep allows a container step to be modified to do something different
-func (o *StepCreateTaskOptions) modifyStep(projectConfig *config.ProjectConfig, parsedStep syntax.Step, gitInfo *gits.GitRepository, pipelineConfig *jenkinsfile.PipelineConfig, templateKind string, step *syntax.Step, containerName string, dir string) syntax.Step {
-
-	if !o.NoKaniko {
-		if strings.HasPrefix(parsedStep.GetCommand(), "skaffold build") ||
-			(len(parsedStep.Arguments) > 0 && strings.HasPrefix(strings.Join(parsedStep.Arguments[1:], " "), "skaffold build")) {
-			sourceDir := o.getWorkspaceDir()
-			dockerfile := filepath.Join(sourceDir, "Dockerfile")
-			localRepo := o.getDockerRegistry(projectConfig)
-			destination := o.dockerImage(projectConfig, gitInfo)
-
-			args := []string{"--cache=true", "--cache-dir=/workspace",
-				"--context=" + sourceDir,
-				"--dockerfile=" + dockerfile,
-				"--destination=" + destination + ":${inputs.params.version}",
-				"--cache-repo=" + localRepo + "/" + o.ProjectID + "/cache",
-			}
-			if localRepo != "gcr.io" {
-				args = append(args, "--skip-tls-verify-registry="+localRepo)
-			}
-
-			if ipAddressRegistryRegex.MatchString(localRepo) {
-				args = append(args, "--insecure")
-			}
-
-			parsedStep.Command = "/kaniko/executor"
-			parsedStep.Arguments = args
-
-			if o.KanikoImage == "" {
-				o.KanikoImage = kanikoDockerImage
-			}
-			parsedStep.Image = o.KanikoImage
-		}
-	}
-	return parsedStep
 }
 
 func (o *StepCreateTaskOptions) dockerImage(projectConfig *config.ProjectConfig, gitInfo *gits.GitRepository) string {
@@ -1487,7 +1338,7 @@ func (o *StepCreateTaskOptions) interpretStep(ns string, task *pipelineapi.Task,
 	}
 
 	// ignore some unnecessary commands
-	// TODO is there a nicer way to diable the git-merge step?
+	// TODO is there a nicer way to disable the git-merge step?
 	if step.Name == "git-merge" {
 		return nil
 	}
@@ -1497,9 +1348,13 @@ func (o *StepCreateTaskOptions) interpretStep(ns string, task *pipelineapi.Task,
 	if dir != "" {
 		workspaceDir := o.getWorkspaceDir()
 		if strings.HasPrefix(dir, workspaceDir) {
-			curDir, err := os.Getwd()
-			if err != nil {
-				return err
+			curDir := o.CloneDir
+			if curDir == "" {
+				var err error
+				curDir, err = os.Getwd()
+				if err != nil {
+					return err
+				}
 			}
 			relPath, err := filepath.Rel(workspaceDir, dir)
 			if err != nil {
@@ -1509,13 +1364,18 @@ func (o *StepCreateTaskOptions) interpretStep(ns string, task *pipelineapi.Task,
 		}
 	}
 	envMap := toEnvMap(step.Env)
-	log.Logger().Infof("running step %s command: %s in dir: %s with env: %s", util.ColorInfo(step.Name), util.ColorInfo(commandLine), util.ColorInfo(dir), util.ColorInfo(fmt.Sprintf("%#v", envMap)))
+	suffix := ""
+	if o.Verbose {
+		suffix = fmt.Sprintf(" with env: %s", util.ColorInfo(fmt.Sprintf("%#v", envMap)))
+	}
+	log.Logger().Infof("\nSTEP: %s command: %s in dir: %s%s\n\n", util.ColorInfo(step.Name), util.ColorInfo(commandLine), util.ColorInfo(dir), suffix)
 	cmd := util.Command{
 		Name: commandAndArgs[0],
 		Args: commandAndArgs[1:],
 		Dir:  dir,
 		Out:  os.Stdout,
 		Err:  os.Stdout,
+		In:   os.Stdin,
 		Env:  envMap,
 	}
 	_, err := cmd.RunWithoutRetry()
